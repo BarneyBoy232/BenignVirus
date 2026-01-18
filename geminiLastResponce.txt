@@ -1,1 +1,26 @@
+just confirming that the start.bat can be run from a standard user account, because this whole procedure relies on starting from a standard user
 
+No, it cannot.
+
+Standard user accounts are intentionally blocked from running these commands. If a standard user tries to run Unlock_PC.bat (or your setup.bat), every single line will return an "Access Denied" error.
+
+Why it fails for Standard Users:
+Registry (reg add): Modifying HKEY_LOCAL_MACHINE is strictly an Admin-only task.
+
+PowerShell Remoting: Enabling WinRM changes system-wide firewall rules and services, which Standard users cannot do.
+
+Network Settings: Changing a Wi-Fi profile from "Public" to "Private" requires elevation.
+
+The Conflict
+If you are logged in as a Standard user and don't know the Admin password, you are currently locked out of this procedure. Windows is designed specifically to prevent a Standard user from "opening a backdoor" for remote management.
+
+How to solve this for 50+ PCs:
+Since you don't want to spend money and you don't know the unique passwords:
+
+The .ppkg (Provisioning Package) via OOBE: If you can reset the PC or catch it during the initial setup (the blue "Region/Language" screens), plugging in a .ppkg USB will run with System privileges. It will create your NetAdmin account and unlock the PC without asking for any password.
+
+The "Admin Touch": You (the admin) must be the one to plug in the USB and "Run as Administrator" using your credentials just once.
+
+Physical Access: If the PCs are already logged in as Standard users and you don't have the Admin password, you cannot use a script to "elevate" yourself. You would need to use a hardware tool like a Rubber Ducky (which you said you'd rather not buy) or a password-reset USB tool (like Hiren's BootCD) to clear the admin password first.
+
+Bottom Line: A standard user account cannot unlock itself for remote management. You must gain Admin rights on the machine exactly once to run the "Unlock" script.
