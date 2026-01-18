@@ -1,0 +1,1538 @@
+import sys
+import traceback
+import json
+import os
+import shutil
+import subprocess
+import threading
+import time
+import math
+import ctypes
+import atexit
+
+# --- CRASH HANDLER ---
+def show_critical_error(msg):
+    try:
+        # Use simple print if windll fails (e.g. non-Windows)
+        if hasattr(ctypes, 'windll'):
+            ctypes.windll.user32.MessageBoxW(0, msg, "TriggerBoard Error", 0x10)
+        else:
+            print(f"CRITICAL ERROR: {msg}")
+    except:
+        print(f"CRITICAL ERROR: {msg}")
+
+try:
+    import keyboard
+    import pyautogui
+    from PySide6.QtWidgets import (QApplication, QWidget, QLabel, QVBoxLayout, 
+                                   QHBoxLayout, QPushButton, QLineEdit, QComboBox, 
+                                   QTableWidget, QTableWidgetItem, QHeaderView, 
+                                   QSystemTrayIcon, QMenu, QMessageBox, QFrame,
+                                   QDialog, QTextEdit, QCheckBox, QSpinBox, QTabWidget,
+                                   QScrollArea, QAbstractItemView, QStackedWidget, QFileDialog,
+                                   QListWidget, QListWidgetItem, QGroupBox, QSplitter,
+                                   QDoubleSpinBox, QInputDialog, QSlider, QFormLayout)
+    from PySide6.QtCore import Qt, Signal, QObject, QPoint, QRectF, QTimer, QSize, QMimeData
+    from PySide6.QtGui import (QPainter, QColor, QBrush, QPen, QFont, 
+                               QAction, QIcon, QPainterPath, QDrag, QCursor, QFontMetrics)
+except ImportError as e:
+    show_critical_error(f"Missing Dependency:\n{e}\n\nPlease run: pip install PySide6 keyboard pyautogui")
+    sys.exit(1)
+except Exception as e:
+    show_critical_error(f"Startup Error:\n{e}\n\n{traceback.format_exc()}")
+    sys.exit(1)
+
+# --- RESOURCE PATH HELPER ---
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+# --- THEME DEFINITIONS ---
+THEMES = {
+    "Cyberpunk": {
+        "bg": "#1e1e2e", "fg": "#cdd6f4", "accent": "#89b4fa",
+        "input_bg": "#313244", "border": "#45475a",
+        "btn_bg": "#89b4fa", "btn_fg": "#1e1e2e",
+        "overlay_bg": (30, 30, 46, 240),
+        "overlay_border": (137, 180, 250),
+        "switch_on": (243, 139, 168), "btn_virtual": (137, 180, 250),
+        "switch_off": (49, 50, 68), "text_on": (30, 30, 46), "text_off": (166, 173, 200)
+    },
+    "Solar Light": {
+        "bg": "#eff1f5", "fg": "#4c4f69", "accent": "#1e66f5",
+        "input_bg": "#e6e9ef", "border": "#bcc0cc",
+        "btn_bg": "#1e66f5", "btn_fg": "#eff1f5",
+        "overlay_bg": (239, 241, 245, 240),
+        "overlay_border": (30, 102, 245),
+        "switch_on": (234, 118, 203), "btn_virtual": (30, 102, 245),
+        "switch_off": (204, 208, 218), "text_on": (239, 241, 245), "text_off": (92, 95, 119)
+    },
+    "Hacker Green": {
+        "bg": "#0d1117", "fg": "#00ff41", "accent": "#00ff41",
+        "input_bg": "#161b22", "border": "#30363d",
+        "btn_bg": "#238636", "btn_fg": "#ffffff",
+        "overlay_bg": (13, 17, 23, 240),
+        "overlay_border": (0, 255, 65),
+        "switch_on": (255, 255, 255), "btn_virtual": (0, 255, 65),
+        "switch_off": (22, 27, 34), "text_on": (13, 17, 23), "text_off": (0, 100, 0)
+    },
+    "Crimson Ops": {
+        "bg": "#1a0b0c", "fg": "#ffb3b3", "accent": "#ff3333",
+        "input_bg": "#2e1214", "border": "#5c1e22",
+        "btn_bg": "#ff3333", "btn_fg": "#1a0b0c",
+        "overlay_bg": (26, 11, 12, 240),
+        "overlay_border": (255, 51, 51),
+        "switch_on": (255, 150, 50), "btn_virtual": (255, 51, 51),
+        "switch_off": (60, 20, 20), "text_on": (26, 11, 12), "text_off": (200, 100, 100)
+    }
+}
+
+def get_stylesheet(theme_name):
+    t = THEMES.get(theme_name, THEMES["Cyberpunk"])
+    # Using simple concatenation to avoid complex f-string nesting issues
+    return """
+    QWidget { 
+        background-color: %s; 
+        color: %s; 
+        font-family: 'Segoe UI', sans-serif; 
+        font-size: 14px; 
+    }
+    QLabel { color: %s; }
+    QLabel h2 { color: %s; font-weight: bold; }
+    QLineEdit, QTextEdit, QSpinBox, QDoubleSpinBox {
+        background-color: %s; 
+        border: 1px solid %s; 
+        border-radius: 4px; 
+        padding: 4px; 
+        color: %s; 
+        selection-background-color: %s;
+    }
+    QLineEdit:focus, QTextEdit:focus, QSpinBox:focus, QDoubleSpinBox:focus { 
+        border: 1px solid %s; 
+    }
+    QGroupBox {
+        border: 1px solid %s; 
+        border-radius: 6px; 
+        margin-top: 20px;
+    }
+    QGroupBox::title {
+        subcontrol-origin: margin; 
+        subcontrol-position: top left; 
+        padding: 0 5px; 
+        color: %s; 
+        font-weight: bold;
+    }
+    QComboBox {
+        background-color: %s; 
+        border: 1px solid %s; 
+        border-radius: 4px; 
+        padding: 4px; 
+        color: %s;
+    }
+    QComboBox:hover { border: 1px solid %s; }
+    QComboBox::drop-down { border: none; width: 20px; }
+    QComboBox::down-arrow {
+        image: none; 
+        border-left: 5px solid transparent; 
+        border-right: 5px solid transparent; 
+        border-top: 5px solid %s; 
+        margin-right: 5px;
+    }
+    QPushButton {
+        background-color: %s; 
+        color: %s; 
+        border: none; 
+        border-radius: 4px; 
+        padding: 6px 12px; 
+        font-weight: bold;
+    }
+    QPushButton:hover { background-color: %s; opacity: 0.9; }
+    QPushButton:pressed { background-color: #74c7ec; }
+    QPushButton:disabled { background-color: %s; color: #6c7086; }
+    QListWidget, QTableWidget {
+        background-color: %s; 
+        border: 1px solid %s; 
+        border-radius: 4px; 
+        outline: none;
+    }
+    QListWidget::item:selected, QTableWidget::item:selected {
+        background-color: %s; 
+        color: %s; 
+        border-radius: 2px;
+    }
+    QHeaderView::section {
+        background-color: %s; 
+        padding: 4px; 
+        border: none; 
+        border-bottom: 2px solid %s; 
+        font-weight: bold; 
+        color: %s;
+    }
+    QTabWidget::pane { 
+        border: 1px solid %s; 
+        background: %s; 
+        border-radius: 6px; 
+    }
+    QTabBar::tab { 
+        background: %s; 
+        color: %s; 
+        padding: 10px 20px; 
+        border-top-left-radius: 6px; 
+        border-top-right-radius: 6px; 
+        margin-right: 2px; 
+    }
+    QTabBar::tab:selected { 
+        background: %s; 
+        color: %s; 
+        font-weight: bold; 
+    }
+    QSlider::groove:horizontal { 
+        border: 1px solid %s; 
+        height: 6px; 
+        background: %s; 
+        border-radius: 3px; 
+    }
+    QSlider::handle:horizontal { 
+        background: %s; 
+        width: 16px; 
+        margin: -5px 0; 
+        border-radius: 8px; 
+    }
+    """ % (
+        t['bg'], t['fg'], t['fg'], t['accent'],
+        t['input_bg'], t['border'], t['fg'], t['accent'], t['accent'],
+        t['border'], t['accent'],
+        t['input_bg'], t['border'], t['fg'], t['accent'], t['fg'],
+        t['btn_bg'], t['btn_fg'], t['accent'], t['border'],
+        t['input_bg'], t['border'], t['accent'], t['btn_fg'],
+        t['bg'], t['accent'], t['fg'],
+        t['border'], t['bg'],
+        t['input_bg'], t['fg'], t['accent'], t['btn_fg'],
+        t['border'], t['input_bg'], t['accent']
+    )
+
+# --- WORKER SIGNALS ---
+class WorkerSignals(QObject):
+    show_overlay = Signal()
+    hide_overlay = Signal()
+    update_overlay = Signal()
+    state_toggled = Signal()
+    execute_action = Signal(dict)
+
+# --- CONFIG MANAGER ---
+class ConfigManager:
+    def __init__(self, filename="triggerboard_config.json"):
+        self.filename = filename
+        self.loadout_dir = "loadouts"
+        if not os.path.exists(self.loadout_dir):
+            os.makedirs(self.loadout_dir)
+
+        self.default_config = {
+            "trigger_key": "tab",
+            "theme": "Cyberpunk",
+            "scale": 1.0,
+            "actions": [] 
+        }
+        self.data = self.load_config()
+
+    def load_config(self):
+        if os.path.exists(self.filename):
+            try:
+                with open(self.filename, 'r') as f:
+                    data = json.load(f)
+                    if not isinstance(data, dict): return self.default_config
+                    if "theme" not in data: data["theme"] = "Cyberpunk"
+                    if "scale" not in data: data["scale"] = 1.0
+                    if "actions" not in data: data["actions"] = []
+                    return data
+            except:
+                return self.default_config
+        return self.default_config
+
+    def save_config(self):
+        with open(self.filename, 'w') as f:
+            json.dump(self.data, f, indent=4)
+
+    def get_actions(self):
+        return self.data["actions"]
+        
+    def get_current_theme(self):
+        return THEMES.get(self.data.get("theme", "Cyberpunk"), THEMES["Cyberpunk"])
+
+    def get_loadout_list(self):
+        return [f for f in os.listdir(self.loadout_dir) if f.endswith(".json")]
+
+    def save_loadout(self, name):
+        if not name.endswith(".json"): name += ".json"
+        path = os.path.join(self.loadout_dir, name)
+        with open(path, 'w') as f:
+            json.dump(self.data, f, indent=4)
+        return path
+
+    def load_loadout(self, name):
+        path = os.path.join(self.loadout_dir, name)
+        if os.path.exists(path):
+            with open(path, 'r') as f:
+                ld = json.load(f)
+                self.data["actions"] = ld.get("actions", [])
+                if "theme" in ld: self.data["theme"] = ld["theme"]
+                if "trigger_key" in ld: self.data["trigger_key"] = ld["trigger_key"]
+            self.save_config()
+            return True
+        return False
+        
+    def delete_loadout(self, name):
+        path = os.path.join(self.loadout_dir, name)
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+                return True
+            except:
+                return False
+        return False
+
+    def import_loadout(self, source_path):
+        name = os.path.basename(source_path)
+        dest_path = os.path.join(self.loadout_dir, name)
+        shutil.copy2(source_path, dest_path)
+        return name
+    
+    def export_json_loadout(self):
+        pass
+
+# --- MACRO ENGINE ---
+class MacroEngine:
+    @staticmethod
+    def execute(action):
+        t = threading.Thread(target=MacroEngine._run_thread, args=(action,))
+        t.daemon = True
+        t.start()
+
+    @staticmethod
+    def _run_thread(action):
+        try:
+            atype = action.get("type", "program")
+            val = action.get("value", "")
+            
+            if atype in ["program", "file"]:
+                subprocess.Popen(val, shell=True)
+            elif atype == "hotkey":
+                keyboard.send(val)
+            elif atype == "text":
+                keyboard.write(val)
+            elif atype == "mouse_move":
+                pts = val.split(',')
+                if len(pts) == 2:
+                    pyautogui.moveTo(int(pts[0].strip()), int(pts[1].strip()))
+            elif atype == "mouse_click":
+                if val == "double":
+                    pyautogui.doubleClick()
+                else:
+                    pyautogui.click(button=val)
+            elif atype == "mouse_scroll":
+                pyautogui.scroll(int(val))
+            elif atype == "mouse_drag":
+                parts = val.split(',')
+                if len(parts) >= 4:
+                    pyautogui.dragTo(int(parts[0]), int(parts[1]), button=parts[2].strip(), duration=float(parts[3]))
+            elif atype == "mouse_path":
+                try:
+                    points = json.loads(val)
+                    for pt in points:
+                        pyautogui.moveTo(pt[0], pt[1], _pause=False)
+                        time.sleep(0.01) 
+                except:
+                    pass
+            elif atype == "wait":
+                time.sleep(float(val))
+            elif atype == "compound":
+                try:
+                    steps = json.loads(val)
+                    for step in steps:
+                        MacroEngine._run_thread(step)
+                except:
+                    pass
+        except Exception as e:
+            print(f"Exec Error: {e}")
+
+# --- DEPENDENCIES ---
+
+class PixelPickerOverlay(QWidget):
+    location_picked = Signal(int, int)
+    def __init__(self):
+        super().__init__()
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setCursor(Qt.CrossCursor)
+        self.setMouseTracking(True)
+        self.setGeometry(QApplication.primaryScreen().geometry())
+        self.raw_x, self.raw_y = pyautogui.position()
+        self.pos_now = self.mapFromGlobal(QCursor.pos())
+        self.countdown = 3
+        self.timer_count = QTimer(self)
+        self.timer_count.timeout.connect(self.tick)
+        self.timer_count.start(1000)
+        self.timer_poll = QTimer(self)
+        self.timer_poll.timeout.connect(self.poll)
+        self.timer_poll.start(16)
+
+    def poll(self):
+        self.raw_x, self.raw_y = pyautogui.position()
+        self.pos_now = self.mapFromGlobal(QCursor.pos())
+        self.update()
+
+    def tick(self):
+        self.countdown -= 1
+        if self.countdown <= 0:
+            self.timer_count.stop()
+            self.timer_poll.stop()
+            self.location_picked.emit(self.raw_x, self.raw_y)
+            self.close()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        x, y = self.pos_now.x(), self.pos_now.y()
+        painter.setPen(QPen(QColor(255, 50, 50), 1))
+        painter.drawLine(x - 25, y, x + 25, y)
+        painter.drawLine(x, y - 25, x, y + 25)
+        painter.setPen(QPen(QColor(255, 50, 50), 2))
+        painter.setBrush(Qt.NoBrush)
+        painter.drawEllipse(QPoint(x, y), 20, 20)
+        t = f"Capturing in {self.countdown}..." if self.countdown > 0 else "Capturing!"
+        painter.setBrush(QBrush(QColor(30, 30, 30, 230)))
+        painter.setPen(QPen(QColor(100, 200, 255), 2))
+        painter.drawRoundedRect(x + 30, y + 30, 180, 60, 8, 8)
+        painter.setPen(QColor(255, 255, 255))
+        painter.drawText(QRectF(x + 30, y + 35, 180, 25), Qt.AlignCenter, f"X: {self.raw_x}, Y: {self.raw_y}")
+        if self.countdown <= 1:
+            painter.setPen(QColor(100, 255, 100))
+        else:
+            painter.setPen(QColor(255, 100, 100))
+        painter.drawText(QRectF(x + 30, y + 60, 180, 25), Qt.AlignCenter, t)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.location_picked.emit(self.raw_x, self.raw_y)
+            self.close()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+
+class TimelineList(QListWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDragDropMode(QAbstractItemView.InternalMove)
+        self.setSelectionMode(QAbstractItemView.SingleSelection)
+
+class PathVisualizer(QWidget):
+    def __init__(self, points):
+        super().__init__()
+        self.points = points
+        self.setMinimumSize(400, 300)
+        self.setStyleSheet("background-color: #181825; border: 1px solid #45475a;")
+
+    def paintEvent(self, event):
+        if not self.points: return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        xs = [p[0] for p in self.points]
+        ys = [p[1] for p in self.points]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+        w, h = self.width() - 40, self.height() - 40
+        range_x = max(1, max_x - min_x)
+        range_y = max(1, max_y - min_y)
+        
+        def to_s(x, y):
+            return QPoint(int(20 + ((x - min_x) / range_x) * w), int(20 + ((y - min_y) / range_y) * h))
+
+        painter.setPen(QPen(QColor("#89b4fa"), 2))
+        for i in range(len(self.points) - 1):
+            painter.drawLine(to_s(*self.points[i]), to_s(*self.points[i+1]))
+        for i, (px, py) in enumerate(self.points):
+            c = QColor("#a6e3a1") if i == 0 else (QColor("#f38ba8") if i == len(self.points)-1 else QColor("#fab387"))
+            painter.setBrush(c)
+            painter.setPen(Qt.NoPen)
+            painter.drawEllipse(to_s(px, py), 4, 4)
+
+class PathEditorDialog(QDialog):
+    path_saved = Signal(str)
+    toggle_rec_signal = Signal(bool)
+
+    def __init__(self, parent=None, initial_path=None):
+        super().__init__(parent)
+        self.setWindowTitle("Path Editor")
+        self.resize(800, 600)
+        self.points = initial_path if initial_path else []
+        self.recording = False
+        
+        # Connect signal for thread-safe UI updates from keyboard hook
+        self.toggle_rec_signal.connect(self.handle_rec_toggle)
+        
+        lay = QHBoxLayout(self)
+        left = QWidget()
+        v = QVBoxLayout(left)
+        self.inf = QLabel("Hold F8 to Record")
+        v.addWidget(self.inf)
+        self.sl = QSlider(Qt.Horizontal)
+        self.sl.setRange(1, 50)
+        self.sl.setValue(5)
+        self.sl.valueChanged.connect(self.smooth)
+        v.addWidget(QLabel("Smoothing:"))
+        v.addWidget(self.sl)
+        self.tb = QTableWidget()
+        self.tb.setColumnCount(2)
+        self.tb.setHorizontalHeaderLabels(["X", "Y"])
+        self.tb.cellChanged.connect(self.chg)
+        v.addWidget(self.tb)
+        b = QPushButton("Save")
+        b.clicked.connect(self.save)
+        v.addWidget(b)
+        lay.addWidget(left)
+        self.viz = PathVisualizer(self.points)
+        lay.addWidget(self.viz, stretch=1)
+        self.tm = QTimer(self)
+        self.tm.timeout.connect(self.poll)
+        
+        # Hooks stored to unhook later
+        self.hooks = []
+        try:
+            # Emit signal instead of direct call to avoid thread issues
+            self.hooks.append(keyboard.on_press_key("f8", lambda e: self.toggle_rec_signal.emit(True), suppress=False))
+            self.hooks.append(keyboard.on_release_key("f8", lambda e: self.toggle_rec_signal.emit(False), suppress=False))
+        except Exception as e:
+            print(f"Hotkey Error: {e}")
+        self.ref()
+
+    def handle_rec_toggle(self, active):
+        if active:
+            self.rec()
+        else:
+            self.stop()
+
+    def rec(self): 
+        if not self.recording:
+            self.recording = True
+            self.points = []
+            self.tm.start(10)
+            self.inf.setText("RECORDING...")
+            self.inf.setStyleSheet("color: red")
+
+    def stop(self): 
+        if self.recording:
+            self.recording = False
+            self.tm.stop()
+            self.inf.setText("Done.")
+            self.inf.setStyleSheet("")
+            self.smooth()
+
+    def poll(self): 
+        p = pyautogui.position()
+        if not self.points or math.hypot(p.x - self.points[-1][0], p.y - self.points[-1][1]) > 5:
+            self.points.append([p.x, p.y])
+            self.viz.points = self.points # Update reference
+            self.viz.update()
+
+    def smooth(self):
+        if not self.points: return
+        th = self.sl.value()
+        n = [self.points[0]]
+        for p in self.points[1:]:
+            if math.hypot(p[0] - n[-1][0], p[1] - n[-1][1]) > th:
+                n.append(p)
+        self.points = n
+        self.viz.points = n
+        self.viz.update()
+        self.ref()
+
+    def ref(self):
+        self.tb.blockSignals(True)
+        self.tb.setRowCount(len(self.points))
+        for r, (x, y) in enumerate(self.points):
+            self.tb.setItem(r, 0, QTableWidgetItem(str(x)))
+            self.tb.setItem(r, 1, QTableWidgetItem(str(y)))
+        self.tb.blockSignals(False)
+
+    def chg(self, r, c): 
+        try:
+            self.points[r][c] = int(self.tb.item(r, c).text())
+            self.viz.update()
+        except: pass
+
+    def save(self):
+        self.path_saved.emit(json.dumps(self.points))
+        self.accept()
+
+    def closeEvent(self, e): 
+        for h in self.hooks:
+            try: keyboard.unhook(h)
+            except: pass
+        super().closeEvent(e)
+
+# --- ACTION BUILDER ---
+class ActionBuilderDialog(QDialog):
+    hotkey_captured = Signal(str)
+    def __init__(self, parent=None, current_data=None):
+        super().__init__(parent)
+        self.setWindowTitle("Action Builder")
+        self.resize(1000, 700)
+        self.steps = []
+        self.hotkey_captured.connect(self.set_hotkey_input)
+        
+        layout = QHBoxLayout(self)
+        
+        # LEFT SIDE
+        left = QWidget()
+        l_lay = QVBoxLayout(left)
+        l_lay.addWidget(QLabel("<h2>Timeline</h2>"))
+        
+        self.timeline = TimelineList()
+        self.timeline.currentRowChanged.connect(self.on_step_selected)
+        l_lay.addWidget(self.timeline)
+        
+        btns = QHBoxLayout()
+        b_del = QPushButton("Delete Step")
+        b_del.clicked.connect(self.delete_step)
+        btns.addWidget(b_del)
+        l_lay.addLayout(btns)
+        
+        toolbox = QGroupBox("Add Step")
+        t_lay = QHBoxLayout(toolbox)
+        
+        for lbl, func in [("🖱 Click", "mouse_click"), ("⤮ Move", "mouse_move"), ("✊ Drag", "mouse_drag"), 
+                          ("✍ Draw", "mouse_path"), ("⌨ Key", "hotkey"), ("⏱ Delay", "wait"), ("🚀 App", "program")]:
+            b = QPushButton(lbl)
+            b.clicked.connect(lambda checked, f=func: self.add_step_default(f))
+            t_lay.addWidget(b)
+            
+        l_lay.addWidget(toolbox)
+        layout.addWidget(left, stretch=1)
+        
+        # RIGHT SIDE
+        right = QWidget()
+        r_lay = QVBoxLayout(right)
+        r_lay.addWidget(QLabel("<h2>Settings</h2>"))
+        
+        self.stack = QStackedWidget()
+        self.setup_pages()
+        r_lay.addWidget(self.stack)
+        r_lay.addStretch()
+        
+        bbox = QHBoxLayout()
+        save = QPushButton("Save")
+        save.clicked.connect(self.accept)
+        cancel = QPushButton("Cancel")
+        cancel.clicked.connect(self.reject)
+        bbox.addWidget(save)
+        bbox.addWidget(cancel)
+        r_lay.addLayout(bbox)
+        
+        layout.addWidget(right, stretch=1)
+        
+        if current_data:
+            self.load_from_data(current_data)
+
+    def setup_pages(self):
+        self.stack.addWidget(QLabel("Select a step."))
+        
+        # MOUSE PAGE
+        self.pg_mouse = QWidget()
+        m_lay = QVBoxLayout(self.pg_mouse)
+        self.c_m_type = QComboBox()
+        self.c_m_type.addItems(["Click", "Move", "Drag", "Scroll", "Draw Path"])
+        self.c_m_type.currentTextChanged.connect(self.on_mouse_type_change)
+        m_lay.addWidget(self.c_m_type)
+        
+        self.st_mouse = QStackedWidget()
+        
+        # Click
+        p1 = QWidget()
+        l1 = QVBoxLayout(p1)
+        self.c_btn = QComboBox()
+        self.c_btn.addItems(["left", "right", "middle", "double"])
+        self.c_btn.currentTextChanged.connect(self.upd)
+        l1.addWidget(QLabel("Button:"))
+        l1.addWidget(self.c_btn)
+        l1.addStretch()
+        self.st_mouse.addWidget(p1)
+        
+        # Move
+        p2 = QWidget()
+        l2 = QVBoxLayout(p2)
+        h2 = QHBoxLayout()
+        self.sx = QSpinBox()
+        self.sx.setRange(0, 9999)
+        self.sy = QSpinBox()
+        self.sy.setRange(0, 9999)
+        self.sx.valueChanged.connect(self.upd)
+        self.sy.valueChanged.connect(self.upd)
+        h2.addWidget(QLabel("X:"))
+        h2.addWidget(self.sx)
+        h2.addWidget(QLabel("Y:"))
+        h2.addWidget(self.sy)
+        l2.addLayout(h2)
+        
+        # Button Layout
+        h_btns = QHBoxLayout()
+        b_pick = QPushButton("🎯 Pick Pos")
+        b_pick.clicked.connect(self.pick_loc)
+        h_btns.addWidget(b_pick)
+        
+        b_test = QPushButton("Test Move")
+        b_test.clicked.connect(self.test_move_pos)
+        h_btns.addWidget(b_test)
+        
+        l2.addLayout(h_btns)
+        l2.addStretch()
+        self.st_mouse.addWidget(p2)
+        
+        # Drag
+        p3 = QWidget()
+        l3 = QVBoxLayout(p3)
+        h3 = QHBoxLayout()
+        self.dx = QSpinBox()
+        self.dx.setRange(0, 9999)
+        self.dy = QSpinBox()
+        self.dy.setRange(0, 9999)
+        self.dx.valueChanged.connect(self.upd)
+        self.dy.valueChanged.connect(self.upd)
+        h3.addWidget(QLabel("To X:"))
+        h3.addWidget(self.dx)
+        h3.addWidget(QLabel("To Y:"))
+        h3.addWidget(self.dy)
+        l3.addLayout(h3)
+        self.c_dbtn = QComboBox()
+        self.c_dbtn.addItems(["left", "right", "middle"])
+        self.c_dbtn.currentTextChanged.connect(self.upd)
+        l3.addWidget(self.c_dbtn)
+        self.d_dur = QDoubleSpinBox()
+        self.d_dur.setValue(0.5)
+        self.d_dur.valueChanged.connect(self.upd)
+        l3.addWidget(self.d_dur)
+        b_dpick = QPushButton("🎯 Pick Dest")
+        b_dpick.clicked.connect(self.pick_loc)
+        l3.addWidget(b_dpick)
+        l3.addStretch()
+        self.st_mouse.addWidget(p3)
+        
+        # Scroll
+        p4 = QWidget()
+        l4 = QVBoxLayout(p4)
+        self.sc_amt = QSpinBox()
+        self.sc_amt.setRange(-10000, 10000)
+        self.sc_amt.valueChanged.connect(self.upd)
+        l4.addWidget(self.sc_amt)
+        l4.addStretch()
+        self.st_mouse.addWidget(p4)
+        
+        # Path
+        p5 = QWidget()
+        l5 = QVBoxLayout(p5)
+        self.path_data = QLineEdit()
+        self.path_data.setReadOnly(True)
+        l5.addWidget(self.path_data)
+        b_path = QPushButton("✍ Open Editor")
+        b_path.clicked.connect(self.open_path_editor)
+        l5.addWidget(b_path)
+        l5.addStretch()
+        self.st_mouse.addWidget(p5)
+        
+        m_lay.addWidget(self.st_mouse)
+        self.stack.addWidget(self.pg_mouse)
+        
+        # KEY PAGE
+        self.pg_key = QWidget()
+        k_lay = QVBoxLayout(self.pg_key)
+        self.c_k_type = QComboBox()
+        self.c_k_type.addItems(["Hotkey", "Text"])
+        self.c_k_type.currentTextChanged.connect(self.on_key_type_change)
+        k_lay.addWidget(self.c_k_type)
+        self.k_val = QLineEdit()
+        self.k_val.textChanged.connect(self.upd)
+        k_lay.addWidget(self.k_val)
+        self.b_rec = QPushButton("Record Key")
+        self.b_rec.clicked.connect(self.start_key_recording)
+        k_lay.addWidget(self.b_rec)
+        k_lay.addStretch()
+        self.stack.addWidget(self.pg_key)
+        
+        # WAIT PAGE
+        self.pg_wait = QWidget()
+        w_lay = QVBoxLayout(self.pg_wait)
+        self.w_spin = QDoubleSpinBox()
+        self.w_spin.setRange(0.01, 3600)
+        self.w_spin.valueChanged.connect(self.upd)
+        w_lay.addWidget(self.w_spin)
+        w_lay.addStretch()
+        self.stack.addWidget(self.pg_wait)
+        
+        # APP PAGE
+        self.pg_app = QWidget()
+        a_lay = QVBoxLayout(self.pg_app)
+        self.a_path = QLineEdit()
+        self.a_path.textChanged.connect(self.upd)
+        a_lay.addWidget(self.a_path)
+        b_br = QPushButton("Browse")
+        b_br.clicked.connect(self.browse_app)
+        a_lay.addWidget(b_br)
+        a_lay.addStretch()
+        self.stack.addWidget(self.pg_app)
+
+    def test_move_pos(self):
+        try:
+            pyautogui.moveTo(self.sx.value(), self.sy.value())
+        except:
+            pass
+
+    def on_mouse_type_change(self, t):
+        idx = ["Click", "Move", "Drag", "Scroll", "Draw Path"].index(t)
+        self.st_mouse.setCurrentIndex(idx)
+        self.upd()
+
+    def on_key_type_change(self, t):
+        self.b_rec.setVisible(t == "Hotkey")
+        self.upd()
+
+    def open_path_editor(self): 
+        try: pts = json.loads(self.path_data.text())
+        except: pts = []
+        dlg = PathEditorDialog(self, pts)
+        dlg.path_saved.connect(lambda s: (self.path_data.setText(s), self.upd()))
+        dlg.exec()
+
+    def add_step_default(self, t):
+        s = {"type": t, "value": ""}
+        if t == "mouse_click": s["value"] = "left"
+        elif t == "mouse_move": s["value"] = "0,0"
+        elif t == "mouse_drag": s["value"] = "0,0,left,0.5"
+        elif t == "mouse_scroll": s["value"] = "100"
+        elif t == "wait": s["value"] = "0.5"
+        elif t == "mouse_path": s["value"] = "[]"
+        self.steps.append(s)
+        self.add_list_item(s)
+        self.timeline.setCurrentRow(len(self.steps)-1)
+
+    def add_list_item(self, s):
+        i = QListWidgetItem()
+        self.update_item_display(i, s)
+        self.timeline.addItem(i)
+
+    def update_item_display(self, item, step):
+        t = step["type"]
+        v = str(step["value"])
+        txt = t
+        if t == "mouse_click": txt = f"Click: {v}"
+        elif t == "mouse_move": txt = f"Move: {v}"
+        elif t == "mouse_drag": txt = f"Drag: {v}"
+        elif t == "mouse_path": txt = "Draw Path"
+        elif t == "hotkey": txt = f"Key: {v}"
+        elif t == "wait": txt = f"Wait: {v}s"
+        elif t == "program": txt = f"Run: {v}"
+        item.setText(txt)
+        item.setData(Qt.UserRole, step)
+
+    def on_step_selected(self, r):
+        if r < 0: self.stack.setCurrentIndex(0); return
+        s = self.steps[r]; t = s["type"]; v = str(s["value"])
+        self.block_signals_ui(True)
+        if t.startswith("mouse"):
+            self.stack.setCurrentWidget(self.pg_mouse)
+            if t == "mouse_click":
+                self.c_m_type.setCurrentText("Click")
+                self.st_mouse.setCurrentIndex(0) # Force view switch
+                self.c_btn.setCurrentText(v)
+            elif t == "mouse_move":
+                self.c_m_type.setCurrentText("Move")
+                self.st_mouse.setCurrentIndex(1) # Force view switch
+                pts = v.split(',')
+                if len(pts)==2:
+                    self.sx.setValue(int(pts[0]))
+                    self.sy.setValue(int(pts[1]))
+            elif t == "mouse_drag":
+                self.c_m_type.setCurrentText("Drag")
+                self.st_mouse.setCurrentIndex(2) # Force view switch
+                pts = v.split(',')
+                if len(pts)>=4:
+                    self.dx.setValue(int(pts[0]))
+                    self.dy.setValue(int(pts[1]))
+                    self.c_dbtn.setCurrentText(pts[2])
+                    self.d_dur.setValue(float(pts[3]))
+            elif t == "mouse_scroll":
+                self.c_m_type.setCurrentText("Scroll")
+                self.st_mouse.setCurrentIndex(3) # Force view switch
+                self.sc_amt.setValue(int(v))
+            elif t == "mouse_path":
+                self.c_m_type.setCurrentText("Draw Path")
+                self.st_mouse.setCurrentIndex(4) # Force view switch
+                self.path_data.setText(v)
+        elif t in ["hotkey", "text"]:
+            self.stack.setCurrentWidget(self.pg_key)
+            self.c_k_type.setCurrentText("Hotkey" if t=="hotkey" else "Text")
+            self.k_val.setText(v)
+        elif t == "wait":
+            self.stack.setCurrentWidget(self.pg_wait)
+            self.w_spin.setValue(float(v))
+        elif t == "program":
+            self.stack.setCurrentWidget(self.pg_app)
+            self.a_path.setText(v)
+        self.block_signals_ui(False)
+
+    def upd(self):
+        r = self.timeline.currentRow()
+        if r < 0: return
+        w = self.stack.currentWidget()
+        s = self.steps[r]
+        if w == self.pg_mouse:
+            mt = self.c_m_type.currentText()
+            if mt == "Click":
+                s["type"] = "mouse_click"
+                s["value"] = self.c_btn.currentText()
+            elif mt == "Move":
+                s["type"] = "mouse_move"
+                s["value"] = f"{self.sx.value()},{self.sy.value()}"
+            elif mt == "Drag":
+                s["type"] = "mouse_drag"
+                s["value"] = f"{self.dx.value()},{self.dy.value()},{self.c_dbtn.currentText()},{self.d_dur.value()}"
+            elif mt == "Scroll":
+                s["type"] = "mouse_scroll"
+                s["value"] = str(self.sc_amt.value())
+            elif mt == "Draw Path":
+                s["type"] = "mouse_path"
+                s["value"] = self.path_data.text()
+        elif w == self.pg_key:
+            kt = self.c_k_type.currentText()
+            s["type"] = "hotkey" if kt=="Hotkey" else "text"
+            s["value"] = self.k_val.text()
+        elif w == self.pg_wait:
+            s["type"] = "wait"
+            s["value"] = str(self.w_spin.value())
+        elif w == self.pg_app:
+            s["type"] = "program"
+            s["value"] = self.a_path.text()
+        self.update_item_display(self.timeline.item(r), s)
+
+    def block_signals_ui(self, b):
+        for w in [self.c_m_type, self.c_btn, self.sx, self.sy, self.dx, self.dy, self.c_dbtn, self.d_dur, self.sc_amt, self.c_k_type, self.k_val, self.w_spin, self.a_path]:
+            w.blockSignals(b)
+
+    def pick_loc(self):
+        self.picker = PixelPickerOverlay()
+        self.picker.location_picked.connect(self.on_loc)
+        self.picker.show()
+
+    def on_loc(self, x, y):
+        if self.c_m_type.currentText() == "Move":
+            self.sx.setValue(x)
+            self.sy.setValue(y)
+        elif self.c_m_type.currentText() == "Drag":
+            self.dx.setValue(x)
+            self.dy.setValue(y)
+        self.upd()
+        self.activateWindow()
+
+    def browse_app(self):
+        f, _ = QFileDialog.getOpenFileName(self, "Select File")
+        if f: self.a_path.setText(f)
+
+    def delete_step(self):
+        r = self.timeline.currentRow()
+        if r >= 0:
+            self.timeline.takeItem(r)
+            self.steps.pop(r)
+
+    def clear_steps(self):
+        self.timeline.clear()
+        self.steps = []
+        self.on_step_selected(-1)
+
+    def set_hotkey_input(self, t):
+        self.k_val.setText(t)
+        self.b_rec.setText("Record Key")
+        self.b_rec.setEnabled(True)
+        self.upd()
+
+    def start_key_recording(self):
+        self.b_rec.setText("Press Combo...")
+        self.b_rec.setEnabled(False)
+        self.k_val.clear()
+        self.k_val.setFocus()
+        # We hook keyboard to capture the next combination
+        self._key_hook = keyboard.hook(self.on_rec_key_event)
+
+    def on_rec_key_event(self, e):
+        if e.event_type == 'down':
+            key = e.name.lower()
+            if key in ['left ctrl', 'right ctrl', 'ctrl']: key = 'ctrl'
+            if key in ['left shift', 'right shift', 'shift']: key = 'shift'
+            if key in ['left alt', 'right alt', 'alt']: key = 'alt'
+            if key in ['left windows', 'right windows', 'windows', 'cmd']: key = 'windows'
+            
+            # Don't capture just modifiers
+            if key in ['ctrl', 'shift', 'alt', 'windows']: return
+            
+            parts = []
+            if keyboard.is_pressed('ctrl'): parts.append('ctrl')
+            if keyboard.is_pressed('shift'): parts.append('shift')
+            if keyboard.is_pressed('alt'): parts.append('alt')
+            if keyboard.is_pressed('windows'): parts.append('windows')
+            if key not in parts: parts.append(key)
+            
+            combo = "+".join(parts)
+            self.hotkey_captured.emit(combo)
+            keyboard.unhook(self.on_rec_key_event)
+
+    def load_from_data(self, data):
+        t = data.get("type", "compound")
+        v = data.get("value", "")
+        if t == "compound": 
+            try: self.steps = json.loads(v)
+            except: self.steps = []
+        else: self.steps = [{"type": t, "value": v}]
+        for s in self.steps: self.add_list_item(s)
+
+    def get_data(self):
+        return {"type": "compound", "value": json.dumps(self.steps)}
+
+# --- OVERLAY WIDGET ---
+class OverlayWidget(QWidget):
+    state_toggled = Signal()
+    execute_action = Signal(dict)
+    
+    def __init__(self, config_manager):
+        super().__init__()
+        self.config_manager = config_manager
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setStyleSheet("background: transparent;")
+        self.button_rects = []
+        self.layout_info = {}
+
+    def refresh_layout(self):
+        self.calculate_layout()
+        if self.isVisible() and self.layout_info:
+            self.setGeometry(self.layout_info["x"], self.layout_info["y"], self.layout_info["w"], self.layout_info["h"])
+            self.repaint()
+
+    def calculate_layout(self):
+        actions = self.config_manager.get_actions()
+        scale = self.config_manager.data.get("scale", 1.0)
+        
+        # Determine widget dimensions
+        if not actions:
+            # Fallback size for empty state (Small box, not full screen)
+            total_w = int(250 * scale)
+            total_h = int(80 * scale)
+            self.button_rects = []
+        else:
+            margin = int(20 * scale)
+            gap = int(10 * scale)
+            row_height = int(50 * scale)
+            screen_width = QApplication.primaryScreen().availableGeometry().width()
+            max_width = min(int(800 * scale), screen_width - 100)
+            
+            self.button_rects = []
+            current_x = margin
+            current_y = margin
+            max_row_width = 0
+            
+            font = QFont("Segoe UI", max(10, int(14 * scale)), QFont.Bold)
+            fm = QFontMetrics(font)
+            
+            for action in actions:
+                text = action['key'].upper() if action.get("mode") == "direct" else action['label']
+                btn_w = max(int(60 * scale), fm.horizontalAdvance(text) + int(30 * scale))
+                
+                if current_x + btn_w > max_width and current_x > margin:
+                    current_x = margin
+                    current_y += row_height + gap
+                
+                self.button_rects.append((QRectF(current_x, current_y, btn_w, row_height), action, text))
+                current_x += btn_w + gap
+                max_row_width = max(max_row_width, current_x - gap)
+
+            total_w = max_row_width + margin
+            total_h = current_y + row_height + margin
+        
+        screen = QApplication.primaryScreen().availableGeometry()
+        x = screen.width() - total_w - 20
+        y = screen.height() - total_h - 20
+        self.layout_info = {"w": total_w, "h": total_h, "x": x, "y": y}
+
+    def show(self):
+        self.refresh_layout()
+        if self.layout_info:
+            self.setGeometry(self.layout_info["x"], self.layout_info["y"], self.layout_info["w"], self.layout_info["h"])
+        super().show()
+
+    def mousePressEvent(self, e):
+        for r, a, t in self.button_rects:
+            if r.contains(e.position()):
+                if a.get("mode") == "direct":
+                    a['active'] = not a['active']
+                    self.config_manager.save_config()
+                    self.state_toggled.emit()
+                    self.repaint()
+                else:
+                    self.execute_action.emit(a)
+                return
+
+    def paintEvent(self, e):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        t = self.config_manager.get_current_theme()
+        scale = self.config_manager.data.get("scale", 1.0)
+        
+        pen_w = max(2, int(2 * scale))
+        rect = QRectF(self.rect()).adjusted(pen_w/2, pen_w/2, -pen_w/2, -pen_w/2)
+        
+        # Fixed: Removed Walrus operator for better compatibility
+        path = QPainterPath()
+        path.addRoundedRect(rect, 15, 15)
+        painter.fillPath(path, QColor(*t['overlay_bg']))
+        painter.setPen(QPen(QColor(*t['overlay_border']), pen_w))
+        painter.drawPath(path)
+        
+        if not self.button_rects:
+            painter.setPen(QColor(255, 255, 255))
+            painter.setFont(QFont("Segoe UI", int(12*scale)))
+            painter.drawText(self.rect(), Qt.AlignCenter, "No Actions Configured")
+            return
+
+        painter.setFont(QFont("Segoe UI", int(14*scale), QFont.Bold))
+        for r, a, text in self.button_rects:
+            if a.get("mode") == "direct":
+                bg = QColor(*t['switch_on']) if a['active'] else QColor(*t['switch_off'])
+                fg = QColor(*t['text_on']) if a['active'] else QColor(*t['text_off'])
+            else:
+                bg = QColor(*t['btn_virtual'])
+                fg = QColor(*t['text_on'])
+            
+            painter.setBrush(bg)
+            painter.setPen(Qt.NoPen)
+            painter.drawRoundedRect(r, 10*scale, 10*scale)
+            painter.setPen(fg)
+            painter.drawText(r, Qt.AlignCenter, text)
+
+# --- MAIN WINDOW ---
+class ConfigWindow(QWidget):
+    config_changed = Signal()
+    trigger_captured = Signal(str)
+    row_key_captured = Signal(str, int)
+    
+    def __init__(self, config_manager, macro_engine):
+        super().__init__()
+        self.config = config_manager
+        self.engine = macro_engine
+        self.setWindowTitle("TriggerBoard Dashboard")
+        self.resize(900, 600)
+        self.current_profile_name = None
+        
+        # Connections
+        self.trigger_captured.connect(self.finalize_trigger_change)
+        self.row_key_captured.connect(self.finalize_row_key_change)
+        
+        main_layout = QVBoxLayout(self)
+        
+        # Top Bar
+        top_bar = QHBoxLayout()
+        header_lbl = QLabel("<h2>TriggerBoard Dashboard</h2>")
+        header_lbl.setTextFormat(Qt.RichText)
+        top_bar.addWidget(header_lbl)
+        top_bar.addStretch()
+        
+        top_bar.addWidget(QLabel("Theme:"))
+        self.theme_combo = QComboBox()
+        self.theme_combo.addItems(THEMES.keys())
+        self.theme_combo.setCurrentText(self.config.data.get("theme", "Cyberpunk"))
+        self.theme_combo.currentTextChanged.connect(self.apply_theme)
+        top_bar.addWidget(self.theme_combo)
+        
+        top_bar.addWidget(QLabel(" Size:"))
+        self.scale_slider = QSlider(Qt.Horizontal)
+        self.scale_slider.setRange(50, 200)
+        self.scale_slider.setValue(int(self.config.data.get("scale", 1.0) * 100))
+        self.scale_slider.setFixedWidth(100)
+        self.scale_slider.valueChanged.connect(self.update_scale)
+        top_bar.addWidget(self.scale_slider)
+        
+        self.trig_btn = QPushButton(f"Trigger: {self.config.data['trigger_key'].upper()}")
+        self.trig_btn.clicked.connect(self.change_trigger)
+        top_bar.addWidget(self.trig_btn)
+        main_layout.addLayout(top_bar)
+        
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
+        
+        # Board Tab
+        self.board_widget = QWidget()
+        board_layout = QVBoxLayout(self.board_widget)
+        self.table = QTableWidget()
+        self.table.setColumnCount(3)
+        self.table.setHorizontalHeaderLabels(["Trigger Key", "Type", "Name (Button Label)"])
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setShowGrid(False)
+        self.table.doubleClicked.connect(self.edit_action_selected)
+        board_layout.addWidget(self.table)
+        
+        btn_layout = QHBoxLayout()
+        add_btn = QPushButton("+ Add Action")
+        add_btn.clicked.connect(self.add_action)
+        save_current_btn = QPushButton("💾 Save")
+        save_current_btn.clicked.connect(self.save_current_loadout)
+        save_new_btn = QPushButton("Save As...")
+        save_new_btn.clicked.connect(self.save_as_new_loadout)
+        edit_btn = QPushButton("✎ Edit Selected")
+        edit_btn.clicked.connect(self.edit_action_selected)
+        del_btn = QPushButton("🗑 Remove Selected")
+        del_btn.setStyleSheet("background-color: #f38ba8; color: #1e1e2e;")
+        del_btn.clicked.connect(self.delete_action)
+        
+        btn_layout.addWidget(add_btn)
+        btn_layout.addWidget(edit_btn)
+        btn_layout.addWidget(save_current_btn)
+        btn_layout.addWidget(save_new_btn)
+        btn_layout.addWidget(del_btn)
+        board_layout.addLayout(btn_layout)
+        self.tabs.addTab(self.board_widget, "Current Profile")
+        
+        # Loadout Tab
+        self.loadout_widget = QWidget()
+        loadout_layout = QVBoxLayout(self.loadout_widget)
+        loadout_layout.addWidget(QLabel("Saved Profiles (Double-click to load):"))
+        self.loadout_list = QListWidget()
+        self.loadout_list.itemDoubleClicked.connect(self.load_selected_loadout)
+        loadout_layout.addWidget(self.loadout_list)
+        
+        lo_btns = QHBoxLayout()
+        btn_import = QPushButton("⬇ Import JSON")
+        btn_import.clicked.connect(self.import_json_loadout)
+        btn_export = QPushButton("⬆ Export JSON")
+        btn_export.clicked.connect(self.export_json_loadout)
+        btn_delete = QPushButton("🗑 Delete Profile")
+        btn_delete.setStyleSheet("background-color: #f38ba8; color: #1e1e2e;")
+        btn_delete.clicked.connect(self.delete_selected_loadout)
+        
+        lo_btns.addWidget(btn_import)
+        lo_btns.addWidget(btn_export)
+        lo_btns.addWidget(btn_delete)
+        loadout_layout.addLayout(lo_btns)
+        self.tabs.addTab(self.loadout_widget, "Profile List")
+        
+        self.refresh_table()
+        self.refresh_loadout_list()
+        self.apply_theme(self.config.data.get("theme", "Cyberpunk"))
+
+    def update_scale(self, value): 
+        self.config.data["scale"] = value / 100.0
+        self.config.save_config()
+        self.config_changed.emit()
+
+    def apply_theme(self, theme_name): 
+        self.config.data["theme"] = theme_name
+        self.config.save_config()
+        QApplication.instance().setStyleSheet(get_stylesheet(theme_name))
+        self.config_changed.emit()
+
+    def refresh_table(self):
+        self.table.setRowCount(0)
+        self.table.blockSignals(True)
+        for row, action in enumerate(self.config.data["actions"]):
+            self.table.insertRow(row)
+            self.table.setRowHeight(row, 50)
+            is_direct = action.get("mode") == "direct"
+            
+            key_text = action.get("key", "").upper() if is_direct else "Button (Click)"
+            key_btn = QPushButton(key_text)
+            key_btn.setStyleSheet("" if is_direct else "background-color: transparent; border: none; color: #6c7086; text-align: left;")
+            key_btn.setEnabled(is_direct)
+            key_btn.clicked.connect(lambda _, r=row: self.capture_row_key(r))
+            self.table.setCellWidget(row, 0, key_btn)
+            
+            m_widget = QWidget()
+            m_layout = QHBoxLayout(m_widget)
+            m_layout.setContentsMargins(0,0,0,0)
+            m_layout.setSpacing(15)
+            chk_btn = QCheckBox("Button")
+            chk_btn.setChecked(not is_direct)
+            chk_btn.clicked.connect(lambda _, r=row: self.set_action_mode(r, "modifier"))
+            chk_ovr = QCheckBox("Key Override")
+            chk_ovr.setChecked(is_direct)
+            chk_ovr.clicked.connect(lambda _, r=row: self.set_action_mode(r, "direct"))
+            m_layout.addWidget(chk_btn)
+            m_layout.addWidget(chk_ovr)
+            m_layout.setAlignment(Qt.AlignCenter)
+            self.table.setCellWidget(row, 1, m_widget)
+            
+            lbl_edit = QLineEdit(action.get("label", ""))
+            lbl_edit.textChanged.connect(lambda text, r=row: self.update_label(r, text))
+            self.table.setCellWidget(row, 2, lbl_edit)
+        self.table.blockSignals(False)
+
+    def capture_row_key(self, row):
+        btn = self.table.cellWidget(row, 0) 
+        if btn: 
+            btn.setText("Press...")
+            btn.setEnabled(False)
+        # Using a global hook for this one-time capture
+        def on_press(e): self.row_key_captured.emit(e.name, row)
+        self._row_hook = keyboard.on_press(on_press, suppress=True)
+
+    def finalize_row_key_change(self, key_name, row):
+        try: keyboard.unhook(self._row_hook)
+        except: pass
+        if 0 <= row < len(self.config.data["actions"]): 
+            self.config.data["actions"][row]["key"] = key_name.lower()
+            self.config.save_config()
+            self.refresh_table()
+            self.config_changed.emit()
+
+    def update_label(self, row, text):
+        if 0 <= row < len(self.config.data["actions"]): 
+            self.config.data["actions"][row]["label"] = text
+            self.config.save_config()
+            self.config_changed.emit()
+
+    def set_action_mode(self, row, mode):
+        if 0 <= row < len(self.config.data["actions"]):
+            if self.config.data["actions"][row]["mode"] == mode: 
+                self.refresh_table()
+                return
+            self.config.data["actions"][row]["mode"] = mode
+            self.config.data["actions"][row]["active"] = True
+            self.config.save_config()
+            self.refresh_table()
+            self.config_changed.emit()
+
+    def edit_action_selected(self):
+        row = self.table.currentRow()
+        if row < 0 or row >= len(self.config.data["actions"]): return
+        action = self.config.data["actions"][row]
+        dlg = ActionBuilderDialog(self, action)
+        if dlg.exec(): 
+            res = dlg.get_data()
+            action.update(res)
+            self.config.save_config()
+            self.refresh_table()
+            self.config_changed.emit()
+
+    def add_action(self):
+        new_action = {"key": "New", "mode": "modifier", "active": False, "type": "compound", "value": "[]", "label": "New Action"}
+        self.config.data["actions"].append(new_action)
+        self.config.save_config()
+        self.refresh_table()
+        self.config_changed.emit()
+
+    def delete_action(self):
+        row = self.table.currentRow()
+        if row >= 0: 
+            del self.config.data["actions"][row]
+            self.config.save_config()
+            self.refresh_table()
+            self.config_changed.emit()
+
+    def change_trigger(self):
+        self.trig_btn.setText("Press any key...")
+        self.trig_btn.setEnabled(False)
+        def on_press(e): self.trigger_captured.emit(e.name)
+        self._temp_hook = keyboard.on_press(on_press, suppress=True)
+
+    def finalize_trigger_change(self, key_name):
+        try: keyboard.unhook(self._temp_hook)
+        except: pass
+        self.config.data["trigger_key"] = key_name.lower()
+        self.config.save_config()
+        self.trig_btn.setText(f"Trigger: {key_name.upper()}")
+        self.trig_btn.setEnabled(True)
+        self.config_changed.emit()
+
+    def refresh_loadout_list(self): 
+        self.loadout_list.clear()
+        for f in self.config.get_loadout_list():
+            self.loadout_list.addItem(f)
+
+    def save_current_loadout(self): 
+        if self.current_profile_name:
+            self.config.save_loadout(self.current_profile_name)
+        else:
+            self.save_as_new_loadout()
+
+    def save_as_new_loadout(self):
+        name, ok = QInputDialog.getText(self, "Save Loadout", "Profile Name:")
+        if ok and name: 
+            self.config.save_loadout(name)
+            self.current_profile_name = name + ".json" if not name.endswith(".json") else name
+            self.refresh_loadout_list()
+            self.tabs.setTabText(0, name.replace(".json", ""))
+            QMessageBox.information(self, "Saved", f"Profile '{name}' saved.")
+
+    def load_selected_loadout(self, item=None):
+        if not item: item = self.loadout_list.currentItem()
+        if not item: return
+        name = item.text()
+        if self.config.load_loadout(name): 
+            self.current_profile_name = name
+            self.refresh_table()
+            self.trig_btn.setText(f"Trigger: {self.config.data['trigger_key'].upper()}")
+            self.config_changed.emit()
+            self.tabs.setTabText(0, name.replace(".json", ""))
+            QMessageBox.information(self, "Loaded", f"Profile '{name}' loaded.")
+            self.tabs.setCurrentIndex(0)
+            self.theme_combo.setCurrentText(self.config.data.get("theme", "Cyberpunk"))
+            self.scale_slider.setValue(int(self.config.data.get("scale", 1.0) * 100))
+
+    def delete_selected_loadout(self):
+        item = self.loadout_list.currentItem()
+        if not item: return
+        name = item.text()
+        if QMessageBox.question(self, "Confirm Delete", f"Delete '{name}'?", QMessageBox.Yes|QMessageBox.No) == QMessageBox.Yes:
+            if self.config.delete_loadout(name): 
+                self.refresh_loadout_list()
+                if self.current_profile_name == name:
+                    self.current_profile_name = None
+                    self.tabs.setTabText(0, "Current Profile")
+                QMessageBox.information(self, "Deleted", "Deleted.")
+
+    def import_json_loadout(self):
+        f, _ = QFileDialog.getOpenFileName(self, "Import JSON", "", "JSON Files (*.json)")
+        if f: 
+            self.config.import_loadout(f)
+            self.refresh_loadout_list()
+            QMessageBox.information(self, "Imported", "Imported.")
+
+    def export_json_loadout(self):
+        item = self.loadout_list.currentItem()
+        if not item: return
+        name = item.text()
+        f, _ = QFileDialog.getSaveFileName(self, "Export JSON", name, "JSON Files (*.json)")
+        if f: 
+            shutil.copy2(os.path.join(self.config.loadout_dir, name), f)
+            QMessageBox.information(self, "Exported", "Exported.")
+
+# --- CONTROLLER ---
+class Controller:
+    def __init__(self, config_manager, overlay, signals, engine):
+        self.cfg = config_manager
+        self.overlay = overlay
+        self.signals = signals
+        self.engine = engine
+        self.modifier_active = False
+        self.paused = False
+        
+        self.update_hooks()
+        overlay.state_toggled.connect(self.update_hooks)
+
+    def update_hooks(self):
+        if self.paused: return
+        try:
+            keyboard.unhook_all()
+            # Hook the Main Trigger
+            trigger = self.cfg.data["trigger_key"]
+            if trigger: 
+                keyboard.on_press_key(trigger, self.on_trigger_press, suppress=True)
+            
+            # Hook any "Direct Mode" keys
+            for action in self.cfg.data["actions"]:
+                if action.get("mode") == "direct" and action.get("active"):
+                    key = action.get("key")
+                    if key: 
+                        keyboard.on_press_key(key, lambda e, a=action: self.engine.execute(a), suppress=True)
+        except Exception as e: 
+            print(f"Hook Error: {e}")
+
+    def on_trigger_press(self, e):
+        # We are in a thread here, so we must emit signals to GUI
+        if not self.modifier_active: 
+            self.modifier_active = True
+            self.signals.show_overlay.emit()
+        else: 
+            self.modifier_active = False
+            self.signals.hide_overlay.emit()
+
+    def toggle_pause(self):
+        self.paused = not self.paused
+        if self.paused: 
+            keyboard.unhook_all()
+        else: 
+            self.update_hooks()
+        return self.paused
+
+def cleanup():
+    try: keyboard.unhook_all()
+    except: pass
+
+def main():
+    atexit.register(cleanup)
+    
+    # Set App ID for Windows Taskbar
+    myappid = 'mycompany.triggerboard.pro.1.0'
+    try:
+        if hasattr(ctypes, 'windll'):
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    except:
+        pass
+
+    app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
+    app.setStyle("Fusion")
+    
+    icon_path = resource_path("TriggerBoard.ico")
+    app_icon = QIcon(icon_path)
+    app.setWindowIcon(app_icon)
+    
+    config = ConfigManager()
+    signals = WorkerSignals()
+    engine = MacroEngine()
+    
+    overlay = OverlayWidget(config)
+    window = ConfigWindow(config, engine)
+    
+    # Wire signals
+    signals.show_overlay.connect(overlay.show)
+    signals.hide_overlay.connect(overlay.hide)
+    
+    window.config_changed.connect(overlay.repaint)
+    window.config_changed.connect(overlay.refresh_layout)
+    
+    overlay.state_toggled.connect(window.refresh_table)
+    overlay.execute_action.connect(engine.execute)
+    
+    controller = Controller(config, overlay, signals, engine)
+    window.config_changed.connect(controller.update_hooks)
+    
+    # System Tray
+    tray = QSystemTrayIcon(app_icon, app)
+    tray.setToolTip("TriggerBoard")
+    menu = QMenu()
+    
+    menu.addAction("Dashboard", window.show)
+    
+    def toggle_pause():
+        is_paused = controller.toggle_pause()
+        pause_action.setText("Resume" if is_paused else "Pause (Unlock Keys)")
+        
+    pause_action = menu.addAction("Pause (Unlock Keys)", toggle_pause)
+    
+    def force_quit(): 
+        cleanup()
+        app.quit()
+        
+    menu.addAction("Force Quit (Ctrl+Alt+Esc)", force_quit)
+    tray.setContextMenu(menu)
+    tray.show()
+    
+    # Emergency Exit Hotkey
+    keyboard.add_hotkey("ctrl+alt+esc", force_quit)
+    
+    print(f"TriggerBoard Running. Trigger: {config.data['trigger_key']}")
+    window.show()
+    sys.exit(app.exec())
+
+if __name__ == "__main__":
+    main()
