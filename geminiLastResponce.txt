@@ -1,25 +1,33 @@
-Here are the answers to your questions regarding window management:
+Connecting to PCs Over the Internet
 
-Does it need administrator permission? No. Simply removing the window decorations (minimize, maximize, close buttons, and title bar) is a standard feature of the operating system's window manager. Any user-level application can do this without elevated privileges.
+To control your 50+ PCs when you are not on the same Wi-Fi, you need a way to bypass the router's firewall. Here are the three most effective methods.
 
-What are the commands to replicate this? In the context of the PySide6 (Qt) library you are using, the command is setWindowFlags.
+1. RustDesk (Easiest - "Zero Config")
 
-To remove the title bar and buttons: Qt.FramelessWindowHint
+RustDesk is designed to work over the internet out of the box.
 
-To keep it above other windows: Qt.WindowStaysOnTopHint
+How it works: Each PC gets a unique "ID" (like a phone number). You enter that ID on your Main PC, and RustDesk's public servers connect the two computers regardless of where they are in the world.
 
-To hide it from the taskbar (optional): Qt.Tool or Qt.SubWindow
+Setup: In your All_In_One_Install.bat, the command to set the password ensures that as long as the PC has internet, you can log in using its ID and your Control123! password.
 
-Usage: self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+2. Tailscale (The "Global Wi-Fi")
 
-Can I use it to cover the whole screen and block closing? Yes, physically, but with security caveats:
+Tailscale creates a Virtual Private Network (VPN). It makes all 50 PCs act as if they are sitting in the same room on the same Wi-Fi, even if they are in different cities.
 
-Visuals: You can set the window geometry to match the screen resolution (or use showFullScreen()) with the FramelessWindowHint. This will visually cover everything, including the taskbar.
+How it works: You install Tailscale on every PC. Each PC gets a "Tailscale IP" (e.g., 100.x.x.x).
 
-Input Trapping: Because the window is fullscreen and "on top," mouse clicks won't reach the desktop.
+Benefit: You can keep using your deploy_to_network.ps1 script exactly as it is, just replace the Wi-Fi IPs with the Tailscale IPs.
 
-Escaping: Smart users can still escape.
+Cost: Free for up to 100 devices (perfect for your 50-PC project).
 
-Alt+Tab / Windows Key: You need to aggressively hook the keyboard (which your keyboard module already does) to suppress these keys.
+3. Action1 (Cloud-Based Management)
 
-Ctrl+Alt+Del: You cannot block this on Windows without replacing the OS shell or writing a custom driver. It is a kernel-level safety feature. A user can always use this to open Task Manager and kill your process.
+As mentioned in your remote_management_guide.md, Action1 is the professional choice for internet-only management.
+
+How it works: The "Agent" you install on the PCs "phones home" to the Action1 website.
+
+Benefit: You don't need to run scripts from your Main PC anymore. You just log into the Action1 website from any browser and click "Install" or "Remote Desktop."
+
+Security Warning
+
+Never use "Port Forwarding" (opening port 3389) on your router to allow Microsoft Remote Desktop over the internet. This is extremely dangerous and will lead to your PCs being hacked or hit with ransomware within minutes. Always use a tool like RustDesk, Tailscale, or Action1.
