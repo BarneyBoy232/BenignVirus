@@ -31,3 +31,63 @@ Benefit: You don't need to run scripts from your Main PC anymore. You just log i
 Security Warning
 
 Never use "Port Forwarding" (opening port 3389) on your router to allow Microsoft Remote Desktop over the internet. This is extremely dangerous and will lead to your PCs being hacked or hit with ransomware within minutes. Always use a tool like RustDesk, Tailscale, or Action1.
+
+
+
+
+Remote PC Management & Auto-Installation Guide
+
+To manage 5 PCs from one main station over Wi-Fi, you should use a combination of Remote Control (for visual access) and Package Management (for fast, automated installs).
+
+1. The "Visual" Way: Remote Desktop (To see the screens)
+
+If you want to access the actual screen of the other PCs so you don't have to walk over to them, use one of these:
+
+Microsoft Remote Desktop (Built-in): * Pros: Fast, no extra software needed on the main PC.
+
+Cons: Only works if the 5 PCs have Windows Pro or Enterprise. Windows Home cannot be "remoted into" using this method.
+
+RustDesk or AnyDesk (Free/Open Source):
+
+Pros: Works on all Windows versions (Home & Pro). Very easy to set up.
+
+Setup: Install the app on all 5 PCs, set a "Password for Unattended Access," and you can jump into any screen instantly from your main PC.
+
+2. The "Auto-Install" Way: Chocolatey + SSH
+
+If you want to install Chrome, VLC, Zoom, etc., on all 5 PCs at once without clicking "Next" on every screen, use a Package Manager.
+
+Step A: Install Chocolatey on the 5 PCs
+
+On each of the 5 computers, run PowerShell as Administrator and paste this:
+
+Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('[https://community.chocolatey.org/install.ps1](https://community.chocolatey.org/install.ps1)'))
+
+
+Step B: Install Software Remotely
+
+Once Chocolatey is installed, you can use a tool like PsExec (from Microsoft Sysinternals) to send commands from your main PC to the others.
+
+Example Command (from your Main PC):
+To install Google Chrome on a PC with the IP 192.168.1.50:
+
+psexec \\192.168.1.50 -u [Username] -p [Password] choco install googlechrome -y
+
+
+-y means "Yes to all," so it installs silently in the background.
+
+3. The "All-in-One" Tool: Action1 (Recommended)
+
+For exactly 5 PCs, I recommend using Action1. It is a cloud-based tool that is free for the first 100 PCs.
+
+Install the Agent: You install a tiny piece of software on the 5 PCs.
+
+Web Dashboard: You log into the Action1 website from your main PC.
+
+Deploy: You can see all 5 PCs in a list, select them all, and click "Install App." It will download and install the software on all of them simultaneously while you sit at your desk.
+
+Summary Recommendation
+
+For quick screen access: Use RustDesk.
+
+For bulk installing apps: Use Action1 (it's the easiest "set it and forget it" solution for small networks).
