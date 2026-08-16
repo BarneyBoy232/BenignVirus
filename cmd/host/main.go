@@ -35,6 +35,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 
 	"projectbv/internal/updater"
 
@@ -190,7 +191,9 @@ func cmdAddApp(args []string) {
 	if *silent != "" {
 		entry.SilentArgs = splitCSV(*silent)
 	}
-	upsert(*dir, entry)
+	if err := upsert(*dir, entry); err != nil {
+		log.Fatal(err)
+	}
 	log.Printf("added app %q %s (%s)", *name, *version, entry.URL)
 }
 
@@ -219,7 +222,9 @@ func cmdAddFile(args []string) {
 		SHA256:  sum,
 		Dest:    *dest,
 	}
-	upsert(*dir, entry)
+	if err := upsert(*dir, entry); err != nil {
+		log.Fatal(err)
+	}
 	log.Printf("added file %q %s -> %s on device (%s)", *name, *version, *dest, entry.URL)
 }
 
@@ -264,9 +269,33 @@ func loadManifest(dir string) updater.Manifest {
 	return m
 }
 
+// manifestMu serialises manifest read-modify-write so concurrent uploads (or an
+// upload racing the CLI) can't lose entries.
+var manifestMu sync.Mutex
+
+// writeManifest writes the manifest atomically (temp file + rename) so a reader
+// (e.g. the dashboard's /api/manifest, or a device fetch) never sees a partial file.
+func writeManifest(dir string, m updater.Manifest) error {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := manifestPath(dir) + ".tmp"
+	if err := os.WriteFile(tmp, b, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, manifestPath(dir))
+}
+
 // upsert replaces the entry with the same Name, or appends it, then writes the
-// manifest back with stable pretty formatting.
-func upsert(dir string, entry updater.App) {
+// manifest back. Returns an error rather than exiting — it is reachable from
+// long-running HTTP requests, so a write failure must not take the host down.
+func upsert(dir string, entry updater.App) error {
+	manifestMu.Lock()
+	defer manifestMu.Unlock()
 	m := loadManifest(dir)
 	replaced := false
 	for i := range m.Apps {
@@ -279,13 +308,7 @@ func upsert(dir string, entry updater.App) {
 	if !replaced {
 		m.Apps = append(m.Apps, entry)
 	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		log.Fatal(err)
-	}
-	b, _ := json.MarshalIndent(m, "", "  ")
-	if err := os.WriteFile(manifestPath(dir), b, 0644); err != nil {
-		log.Fatal(err)
-	}
+	return writeManifest(dir, m)
 }
 
 func copyAndHash(src, dst string) string {

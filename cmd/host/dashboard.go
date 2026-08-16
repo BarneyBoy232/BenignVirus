@@ -44,6 +44,10 @@ func startDashboard(addr, dir, base string, ts *tsnet.Server) {
 	mux.HandleFunc("/api/app", uploadHandler(dir, base, false))
 	mux.HandleFunc("/api/file", uploadHandler(dir, base, true))
 	mux.HandleFunc("/api/remove", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "POST only", http.StatusMethodNotAllowed)
+			return
+		}
 		// r.FormValue parses multipart bodies (which the dashboard sends);
 		// r.ParseForm alone would not, leaving name empty.
 		name := r.FormValue("name")
@@ -51,9 +55,16 @@ func startDashboard(addr, dir, base string, ts *tsnet.Server) {
 			http.Error(w, "name required", http.StatusBadRequest)
 			return
 		}
-		removeEntry(dir, name)
+		if err := removeEntry(dir, name); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
 	})
 
+	// Guard against accidentally exposing the management panel beyond this PC.
+	if !strings.HasPrefix(addr, "127.0.0.1") && !strings.HasPrefix(addr, "localhost") {
+		log.Printf("dashboard: WARNING %s is not localhost — the management panel would be reachable by others", addr)
+	}
 	log.Printf("dashboard: open http://%s in your browser to manage deployments", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {
 		log.Printf("dashboard: stopped: %v", err)
@@ -111,6 +122,12 @@ func uploadHandler(dir, base string, isFile bool) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		// Clean up any temp files the spill created (installers are the large case).
+		defer func() {
+			if r.MultipartForm != nil {
+				r.MultipartForm.RemoveAll()
+			}
+		}()
 		name := r.FormValue("name")
 		version := r.FormValue("version")
 		if name == "" || version == "" {
@@ -182,7 +199,9 @@ func saveApp(dir, base, name, version string, r io.Reader, filename string, sile
 	if len(silentArgs) > 0 {
 		e.SilentArgs = silentArgs
 	}
-	upsert(dir, e)
+	if err := upsert(dir, e); err != nil {
+		return updater.App{}, err
+	}
 	return e, nil
 }
 
@@ -196,12 +215,16 @@ func saveFile(dir, base, name, version string, r io.Reader, filename, dest strin
 		Name: name, Version: version, Type: "file",
 		URL: joinURL(base, "files", filename), SHA256: sum, Dest: dest,
 	}
-	upsert(dir, e)
+	if err := upsert(dir, e); err != nil {
+		return updater.App{}, err
+	}
 	return e, nil
 }
 
 // removeEntry drops the named entry from the manifest (leaves the file on disk).
-func removeEntry(dir, name string) {
+func removeEntry(dir, name string) error {
+	manifestMu.Lock()
+	defer manifestMu.Unlock()
 	m := loadManifest(dir)
 	kept := m.Apps[:0]
 	for _, a := range m.Apps {
@@ -210,6 +233,5 @@ func removeEntry(dir, name string) {
 		}
 	}
 	m.Apps = kept
-	b, _ := json.MarshalIndent(m, "", "  ")
-	_ = os.WriteFile(manifestPath(dir), b, 0644)
+	return writeManifest(dir, m)
 }
