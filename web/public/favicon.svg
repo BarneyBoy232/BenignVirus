@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+  <circle cx="50" cy="50" r="49" fill="#111111"/>
+  <circle cx="50" cy="50" r="44" fill="#ffd200"/>
+  <g fill="#111111">
+    <path d="M50 50 L30 15.36 A40 40 0 0 1 70 15.36 Z"/>
+    <path d="M50 50 L90 50 A40 40 0 0 1 70 84.64 Z"/>
+    <path d="M50 50 L30 84.64 A40 40 0 0 1 10 50 Z"/>
+  </g>
+  <circle cx="50" cy="50" r="15" fill="#ffd200"/>
+  <circle cx="50" cy="50" r="9" fill="#111111"/>
+</svg>
