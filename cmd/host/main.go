@@ -82,7 +82,9 @@ Shared flags: --dir (default deploy)  --base (default http://deployhost:8080)
 func cmdServe(args []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	dir := fs.String("dir", "deploy", "deploy directory to serve")
-	addr := fs.String("addr", ":8080", "address to listen on")
+	addr := fs.String("addr", ":8080", "tailnet/file-server address")
+	base := fs.String("base", "http://deployhost:8080", "base URL devices use to reach this host")
+	dashAddr := fs.String("dashboard", "127.0.0.1:8088", "local dashboard address (localhost only)")
 	useTsnet := fs.Bool("tsnet", false, "serve directly on your tailnet via embedded Tailscale (no Tailscale app needed)")
 	hostname := fs.String("hostname", "deployhost", "tailnet hostname to register as (tsnet mode)")
 	authkey := fs.String("authkey", "", "Tailscale auth key for tsnet mode (or set TS_AUTHKEY)")
@@ -102,9 +104,11 @@ func cmdServe(args []string) {
 	})
 
 	if *useTsnet {
-		serveTsnet(*hostname, *authkey, *addr, *dir, *verbose, logged)
+		serveTsnet(*hostname, *authkey, *addr, *dir, *base, *dashAddr, *verbose, logged)
 		return
 	}
+	// Plain mode: no embedded node, so the dashboard can't list devices.
+	go startDashboard(*dashAddr, *dir, *base, nil)
 	log.Printf("serving %q on %s (manifest at /manifest.json)", *dir, *addr)
 	log.Printf("note: this machine must be reachable on your tailnet (Tailscale app running, or use --tsnet)")
 	log.Fatal(http.ListenAndServe(*addr, logged))
@@ -113,7 +117,7 @@ func cmdServe(args []string) {
 // serveTsnet serves the deploy directory directly on the tailnet using an
 // embedded Tailscale node — so the host machine needs NO Tailscale install,
 // exactly like the agent. Devices reach it at http://<hostname>:<port>.
-func serveTsnet(hostname, authkey, addr string, dir string, verbose bool, h http.Handler) {
+func serveTsnet(hostname, authkey, addr, dir, base, dashAddr string, verbose bool, h http.Handler) {
 	if authkey == "" {
 		authkey = os.Getenv("TS_AUTHKEY")
 	}
@@ -149,6 +153,8 @@ func serveTsnet(hostname, authkey, addr string, dir string, verbose bool, h http
 	if err != nil {
 		log.Fatalf("tsnet listen: %v", err)
 	}
+	// Local dashboard (with live device list from this node's tailnet status).
+	go startDashboard(dashAddr, dir, base, srv)
 	log.Printf("serving %q on the tailnet as http://%s%s (manifest at /manifest.json)", dir, hostname, addr)
 	log.Fatal(http.Serve(ln, h))
 }

@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>projectBV — Deploy Dashboard</title>
+<style>
+  :root{
+    --bg:#0e0f11; --panel:#17191c; --panel2:#1e2125; --line:#2a2e33;
+    --text:#e9ebee; --dim:#9aa1a9; --accent:#ffd200; --accent-ink:#1a1a00;
+    --danger:#ff5c5c; --ok:#5cd67a;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{display:flex;align-items:center;gap:12px;padding:18px 24px;
+    border-bottom:1px solid var(--line);background:var(--panel)}
+  header .mark{width:28px;height:28px}
+  header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px}
+  header .status{margin-left:auto;font-size:13px;color:var(--dim)}
+  header .status b{color:var(--ok)}
+  main{max-width:920px;margin:0 auto;padding:24px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:12px;
+    padding:20px;margin-bottom:22px}
+  .panel h2{margin:0 0 4px;font-size:15px}
+  .panel p.sub{margin:0 0 16px;color:var(--dim);font-size:13px}
+  .seg{display:inline-flex;background:var(--panel2);border:1px solid var(--line);
+    border-radius:9px;padding:3px;margin-bottom:16px}
+  .seg button{background:none;border:0;color:var(--dim);padding:7px 16px;
+    border-radius:7px;cursor:pointer;font:inherit;font-size:14px}
+  .seg button.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  label{display:block;font-size:12px;color:var(--dim);margin:0 0 5px}
+  input[type=text]{width:100%;background:var(--panel2);border:1px solid var(--line);
+    color:var(--text);border-radius:8px;padding:9px 11px;font:inherit}
+  input[type=text]:focus{outline:none;border-color:var(--accent)}
+  .full{grid-column:1/-1}
+  .drop{grid-column:1/-1;border:1.5px dashed var(--line);border-radius:10px;
+    padding:22px;text-align:center;color:var(--dim);cursor:pointer;background:var(--panel2)}
+  .drop.hot{border-color:var(--accent);color:var(--text)}
+  .drop b{color:var(--text)}
+  .row-actions{display:flex;align-items:center;gap:12px;margin-top:16px}
+  button.primary{background:var(--accent);color:var(--accent-ink);border:0;
+    border-radius:8px;padding:10px 18px;font:inherit;font-weight:650;cursor:pointer}
+  button.primary:disabled{opacity:.5;cursor:default}
+  .msg{font-size:13px}
+  .msg.err{color:var(--danger)} .msg.ok{color:var(--ok)}
+  table{width:100%;border-collapse:collapse;font-size:14px}
+  th{text-align:left;color:var(--dim);font-weight:500;font-size:12px;
+    padding:8px 10px;border-bottom:1px solid var(--line)}
+  td{padding:10px;border-bottom:1px solid var(--line);vertical-align:middle}
+  td.name{font-weight:600}
+  .tag{font-size:11px;padding:2px 8px;border-radius:20px;background:var(--panel2);
+    border:1px solid var(--line);color:var(--dim)}
+  .tag.app{color:var(--accent)} .tag.file{color:#7db8ff}
+  .mono{font-family:ui-monospace,Consolas,monospace;font-size:12px;color:var(--dim)}
+  button.del{background:none;border:1px solid var(--line);color:var(--danger);
+    border-radius:7px;padding:5px 10px;cursor:pointer;font:inherit;font-size:12px}
+  .empty{color:var(--dim);text-align:center;padding:26px}
+  .dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:7px;vertical-align:middle}
+  .dot.on{background:var(--ok)} .dot.off{background:#5a5f66}
+</style>
+</head>
+<body>
+<header>
+  <svg class="mark" viewBox="0 0 100 100" aria-hidden="true"><circle cx="50" cy="50" r="48" fill="#ffd200"/><g fill="#111"><circle cx="50" cy="50" r="9"/><path d="M50 50 L36.4 26.5 A27 27 0 0 1 63.6 26.5 Z"/><path d="M50 50 L74.6 61.5 A27 27 0 0 1 61 85 Z"/><path d="M50 50 L39 85 A27 27 0 0 1 25.4 61.5 Z"/></g></svg>
+  <h1>projectBV — Deploy Dashboard</h1>
+  <div class="status" id="status">connecting…</div>
+</header>
+
+<main>
+  <section class="panel">
+    <h2>Connected devices</h2>
+    <p class="sub">Devices running the projectBV agent on your tailnet. Anything you deploy goes straight to these.</p>
+    <table>
+      <thead><tr><th>Device</th><th>Tailnet IP</th><th>Status</th></tr></thead>
+      <tbody id="devrows"></tbody>
+    </table>
+    <div class="empty" id="devempty" style="display:none">No devices yet — run the USB key on a device and it'll appear here within a minute.</div>
+  </section>
+
+  <section class="panel">
+    <h2>Send a file / app</h2>
+    <p class="sub">The file stays on this PC and streams straight to your devices over the tailnet. Nothing is uploaded to any cloud.</p>
+
+    <div class="seg" id="seg">
+      <button data-kind="app" class="on">App (installer)</button>
+      <button data-kind="file">File</button>
+    </div>
+
+    <form id="form">
+      <div class="grid">
+        <div><label>Name (unique)</label><input type="text" id="name" placeholder="AcmeTool" required></div>
+        <div><label>Version</label><input type="text" id="version" placeholder="1.2.0" required></div>
+
+        <div class="full appOnly"><label>Silent install args (optional, comma-separated)</label>
+          <input type="text" id="silent" placeholder="/VERYSILENT, /NORESTART"></div>
+
+        <div class="full fileOnly" style="display:none"><label>Destination path on the device</label>
+          <input type="text" id="dest" placeholder="C:\ProgramData\MyApp\config.json"></div>
+
+        <div class="drop full" id="drop">
+          <b>Drop a file here</b> or click to choose
+          <div class="mono" id="fileLabel" style="margin-top:6px"></div>
+          <input type="file" id="file" hidden>
+        </div>
+      </div>
+      <div class="row-actions">
+        <button type="submit" class="primary" id="deploy">Deploy</button>
+        <span class="msg" id="msg"></span>
+      </div>
+    </form>
+  </section>
+
+  <section class="panel">
+    <h2>Current deployments</h2>
+    <p class="sub">What every device will pull. Bump a version (re-add) to push an update; remove to stop offering it.</p>
+    <table>
+      <thead><tr><th>Name</th><th>Version</th><th>Type</th><th>Destination / args</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+    <div class="empty" id="empty" style="display:none">Nothing published yet — add your first deployment above.</div>
+  </section>
+</main>
+
+<script>
+let kind = "app";
+
+const $ = id => document.getElementById(id);
+const seg = $("seg"), fileInput = $("file"), drop = $("drop");
+
+seg.addEventListener("click", e => {
+  const b = e.target.closest("button"); if(!b) return;
+  kind = b.dataset.kind;
+  [...seg.children].forEach(x => x.classList.toggle("on", x===b));
+  document.querySelectorAll(".appOnly").forEach(x=>x.style.display = kind==="app"?"":"none");
+  document.querySelectorAll(".fileOnly").forEach(x=>x.style.display = kind==="file"?"":"none");
+});
+
+drop.addEventListener("click", () => fileInput.click());
+["dragover","dragenter"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.add("hot")}));
+["dragleave","drop"].forEach(ev=>drop.addEventListener(ev,e=>{e.preventDefault();drop.classList.remove("hot")}));
+drop.addEventListener("drop", e => { if(e.dataTransfer.files[0]){ fileInput.files = e.dataTransfer.files; showFile(); }});
+fileInput.addEventListener("change", showFile);
+function showFile(){ const f=fileInput.files[0]; $("fileLabel").textContent = f ? `${f.name} · ${(f.size/1048576).toFixed(1)} MB` : ""; }
+
+function setMsg(t, ok){ const m=$("msg"); m.textContent=t; m.className="msg "+(ok?"ok":"err"); }
+
+async function refresh(){
+  try{
+    const r = await fetch("/api/manifest"); const m = await r.json();
+    const apps = m.apps || [];
+    $("status").innerHTML = `host <b>online</b> · ${apps.length} deployment${apps.length===1?"":"s"}`;
+    const rows = $("rows"); rows.innerHTML = "";
+    $("empty").style.display = apps.length ? "none" : "";
+    for(const a of apps){
+      const type = (a.type||"app");
+      const detail = type==="file" ? (a.dest||"") : ((a.silentArgs||[]).join(" ")||"—");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="name">${esc(a.name)}</td><td>${esc(a.version)}</td>
+        <td><span class="tag ${type}">${type}</span></td>
+        <td class="mono">${esc(detail)}</td>
+        <td style="text-align:right"><button class="del" data-name="${esc(a.name)}">Remove</button></td>`;
+      rows.appendChild(tr);
+    }
+    rows.querySelectorAll(".del").forEach(b=>b.onclick=()=>remove(b.dataset.name));
+  }catch(e){ $("status").textContent = "host offline"; }
+}
+function esc(s){ return String(s).replace(/[&<>"]/g, c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c])); }
+
+async function loadDevices(){
+  try{
+    const r = await fetch("/api/devices"); const list = await r.json();
+    const rows = $("devrows"); rows.innerHTML = "";
+    $("devempty").style.display = list.length ? "none" : "";
+    for(const d of list){
+      const nice = d.name.replace(/^projectbv-/i,"");
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td class="name">${esc(nice)}</td>
+        <td class="mono">${esc(d.ip||"—")}</td>
+        <td><span class="dot ${d.online?"on":"off"}"></span>${d.online?"online":"offline"}</td>`;
+      rows.appendChild(tr);
+    }
+  }catch(e){ /* dashboard still usable without device list */ }
+}
+
+$("form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const f = fileInput.files[0];
+  if(!f){ setMsg("Choose a file first.", false); return; }
+  const fd = new FormData();
+  fd.append("name", $("name").value.trim());
+  fd.append("version", $("version").value.trim());
+  fd.append("file", f);
+  let url;
+  if(kind==="app"){ url="/api/app"; fd.append("silent", $("silent").value.trim()); }
+  else { url="/api/file"; const d=$("dest").value.trim(); if(!d){setMsg("File needs a destination path.",false);return;} fd.append("dest", d); }
+
+  $("deploy").disabled = true; setMsg("Publishing…", true);
+  try{
+    const r = await fetch(url, {method:"POST", body:fd});
+    if(!r.ok){ setMsg(await r.text() || "Failed.", false); }
+    else { setMsg("Published — devices will pick it up on their next check.", true);
+      $("form").reset(); showFile(); refresh(); }
+  }catch(err){ setMsg(String(err), false); }
+  $("deploy").disabled = false;
+});
+
+async function remove(name){
+  if(!confirm(`Remove "${name}" from the manifest? (already-installed devices keep it)`)) return;
+  const fd = new FormData(); fd.append("name", name);
+  await fetch("/api/remove", {method:"POST", body:fd});
+  refresh();
+}
+
+refresh(); loadDevices();
+setInterval(refresh, 8000);
+setInterval(loadDevices, 6000);
+</script>
+</body>
+</html>
