@@ -184,7 +184,7 @@ func streamAndHash(dst string, r io.Reader) (string, error) {
 
 // saveApp stores an installer under deploy/apps and upserts its manifest entry.
 func saveApp(dir, base, name, version string, r io.Reader, filename string, silentArgs []string) (updater.App, error) {
-	ext := filepath.Ext(filename)
+	ext := strings.ToLower(filepath.Ext(filename)) // accept .EXE/.MSI too
 	if ext != ".msi" && ext != ".exe" {
 		return updater.App{}, fmt.Errorf("installer must be .msi or .exe (got %q)", ext)
 	}

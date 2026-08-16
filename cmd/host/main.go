@@ -31,8 +31,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -350,7 +350,13 @@ func hashFile(p string) string {
 
 func joinURL(base string, parts ...string) string {
 	base = strings.TrimRight(base, "/")
-	return base + "/" + path.Join(parts...)
+	// Escape each segment so filenames with spaces/#/? produce a valid URL that
+	// devices can actually fetch (e.g. "my app.msi" -> "my%20app.msi").
+	escaped := make([]string, len(parts))
+	for i, p := range parts {
+		escaped[i] = url.PathEscape(p)
+	}
+	return base + "/" + strings.Join(escaped, "/")
 }
 
 func splitCSV(s string) []string {
