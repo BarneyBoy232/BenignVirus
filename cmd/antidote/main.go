@@ -20,7 +20,10 @@ import (
 func main() {
 	logger := applog.New()
 
-	if !winutil.IsAdmin() {
+	// A machine-wide install (service + Program Files) needs admin to remove; a
+	// per-user install doesn't. Only elevate if there's a machine install present.
+	machineInstalled := fileExists(config.AgentExePath())
+	if machineInstalled && !winutil.IsAdmin() {
 		if err := winutil.RelaunchElevated(os.Args[1:]); err != nil {
 			logger.Printf("antidote: could not elevate: %v", err)
 			os.Exit(1)
@@ -28,22 +31,22 @@ func main() {
 		return
 	}
 
-	// Stop + remove the service (ignore errors: it may already be gone).
+	// Machine-wide artifacts (ignored if absent or not admin).
 	_ = winsvc.Control(logger, "stop")
-	if err := winsvc.Control(logger, "uninstall"); err != nil {
-		logger.Printf("antidote: service uninstall: %v", err)
-	}
+	_ = winsvc.Control(logger, "uninstall")
+	_ = winutil.RemoveUninstallEntry()
+	_ = os.RemoveAll(config.InstallDir())
 
-	// Remove the Add/Remove Programs entry.
-	if err := winutil.RemoveUninstallEntry(); err != nil {
-		logger.Printf("antidote: remove uninstall entry: %v", err)
-	}
+	// Per-user artifacts.
+	_ = winutil.RemoveRunKey()
+	_ = winutil.RemoveUserUninstallEntry()
+	_ = os.RemoveAll(config.UserInstallDir())
 
-	// Delete data first (never holds a running exe), then the install dir.
 	_ = os.RemoveAll(config.DataDir())
-	if err := os.RemoveAll(config.InstallDir()); err != nil {
-		logger.Printf("antidote: could not fully remove %s: %v", config.InstallDir(), err)
-	}
-
 	logger.Printf("antidote: projectBV removed from this device")
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }

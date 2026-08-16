@@ -73,7 +73,22 @@ func DataDir() string {
 	return filepath.Join(base, "projectBV")
 }
 
-// AgentExePath is the installed agent binary's full path.
+// AgentExePath is the installed agent binary's full path (machine-wide install).
 func AgentExePath() string {
 	return filepath.Join(InstallDir(), "projectBV.exe")
+}
+
+// UserInstallDir is the per-user install folder (used when there's no admin),
+// e.g. C:\Users\<you>\AppData\Local\projectBV.
+func UserInstallDir() string {
+	base := os.Getenv("LOCALAPPDATA")
+	if base == "" {
+		base = filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Local")
+	}
+	return filepath.Join(base, "projectBV")
+}
+
+// UserAgentExePath is the per-user installed agent path.
+func UserAgentExePath() string {
+	return filepath.Join(UserInstallDir(), "projectBV.exe")
 }

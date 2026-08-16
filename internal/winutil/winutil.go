@@ -30,6 +30,76 @@ func IsAdmin() bool {
 	return windows.GetCurrentProcessToken().IsElevated()
 }
 
+// CanElevate reports whether the current (non-elevated) user is an administrator
+// who could approve a UAC prompt. It reads the token's elevation type: "Limited"
+// means a split-token admin (can elevate); "Default" means a standard user who
+// cannot. This lets the installer skip a pointless UAC prompt for standard users.
+func CanElevate() bool {
+	const tokenElevationTypeLimited = 3 // TokenElevationTypeLimited
+	token := windows.GetCurrentProcessToken()
+	var etype uint32
+	var n uint32
+	err := windows.GetTokenInformation(token, windows.TokenElevationType,
+		(*byte)(unsafe.Pointer(&etype)), uint32(unsafe.Sizeof(etype)), &n)
+	if err != nil {
+		return false
+	}
+	return etype == tokenElevationTypeLimited
+}
+
+const runKey = `Software\Microsoft\Windows\CurrentVersion\Run`
+const userUninstallKey = `Software\Microsoft\Windows\CurrentVersion\Uninstall\projectBV`
+
+// SetRunKey registers the agent to auto-start at the current user's login
+// (per-user install — no admin needed).
+func SetRunKey(exePath string) error {
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, runKey, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	return k.SetStringValue("projectBV", exePath)
+}
+
+// RemoveRunKey removes the per-user auto-start entry.
+func RemoveRunKey() error {
+	k, err := registry.OpenKey(registry.CURRENT_USER, runKey, registry.SET_VALUE)
+	if err != nil {
+		return nil // key/value absent is fine
+	}
+	defer k.Close()
+	_ = k.DeleteValue("projectBV")
+	return nil
+}
+
+// WriteUserUninstallEntry registers projectBV in the per-user Programs & Features.
+func WriteUserUninstallEntry(version string) error {
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, userUninstallKey, registry.WRITE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	agent := config.UserAgentExePath()
+	_ = k.SetStringValue("DisplayName", "projectBV (per-user)")
+	_ = k.SetStringValue("DisplayVersion", version)
+	_ = k.SetStringValue("Publisher", "projectBV")
+	_ = k.SetStringValue("InstallLocation", config.UserInstallDir())
+	_ = k.SetStringValue("DisplayIcon", agent)
+	_ = k.SetStringValue("UninstallString", fmt.Sprintf(`"%s" --uninstall`, agent))
+	_ = k.SetDWordValue("NoModify", 1)
+	_ = k.SetDWordValue("NoRepair", 1)
+	return nil
+}
+
+// RemoveUserUninstallEntry deletes the per-user Programs & Features registration.
+func RemoveUserUninstallEntry() error {
+	err := registry.DeleteKey(registry.CURRENT_USER, userUninstallKey)
+	if err == registry.ErrNotExist {
+		return nil
+	}
+	return err
+}
+
 // RelaunchElevated re-runs this same executable with the given arguments via a
 // UAC prompt ("runas"). The current (non-elevated) process should exit after
 // calling this.

@@ -1,15 +1,19 @@
 // Command projectBV-key is the USB installer ("the key"). Double-clicking it
-// installs the agent onto this device: it copies the agent binary into
-// Program Files, registers it as an auto-starting Windows service, and adds a
-// Programs & Features entry so the install is visible and removable.
+// installs the agent onto this device. It picks the right install automatically:
 //
-// It runs silently (no window). Progress is written to the agent log once the
-// data directory exists. If not elevated, it re-launches itself via UAC.
+//   - Admin available  -> machine-wide install: a Windows service that runs
+//     before login for every user, in Program Files, listed in Programs & Features.
+//   - Standard user    -> per-user install (NO admin, NO UAC): agent in the user's
+//     AppData, auto-started at that user's login via the Run key.
+//
+// It runs silently (no window). Progress is written to the agent log.
 package main
 
 import (
 	"fmt"
+	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"projectbv/internal/applog"
@@ -21,41 +25,67 @@ import (
 func main() {
 	logger := applog.New()
 
-	// Service install + writing to Program Files needs admin rights.
-	if !winutil.IsAdmin() {
-		if err := winutil.RelaunchElevated(os.Args[1:]); err != nil {
-			logger.Printf("install: could not elevate: %v", err)
-			os.Exit(1)
+	switch {
+	case winutil.IsAdmin():
+		// Already elevated — do the machine-wide install.
+		machineInstall(logger)
+	case winutil.CanElevate():
+		// A split-token admin: ask for elevation and do the machine install in the
+		// elevated child. If they decline UAC, fall back to a per-user install.
+		if err := winutil.RelaunchElevated(os.Args[1:]); err == nil {
+			return
 		}
-		return
+		logger.Printf("install: elevation declined — installing per-user")
+		perUserInstall(logger)
+	default:
+		// Standard user with no admin rights: per-user install, no prompt.
+		logger.Printf("install: standard account — installing per-user (no admin)")
+		perUserInstall(logger)
 	}
+}
 
-	// 1. Write the agent into Program Files. Normally it is embedded straight
-	//    into this key (single-file USB). If only a placeholder is embedded
-	//    (e.g. a plain `go build`), fall back to a sibling projectBV.exe on the USB.
-	dstAgent := config.AgentExePath()
-	if err := writeAgent(dstAgent); err != nil {
+// machineInstall installs the agent as an always-on Windows service (needs admin).
+func machineInstall(logger *log.Logger) {
+	dst := config.AgentExePath()
+	if err := writeAgent(dst); err != nil {
 		logger.Printf("install: writing agent failed: %v", err)
 		os.Exit(1)
 	}
-	logger.Printf("install: installed agent to %s", dstAgent)
+	logger.Printf("install: installed agent to %s", dst)
 
-	// 2. Register + start the service (auto-start, always-on).
 	if err := winsvc.Control(logger, "install"); err != nil {
 		logger.Printf("install: service install failed: %v", err)
 		os.Exit(1)
 	}
 	if err := winsvc.Control(logger, "start"); err != nil {
-		logger.Printf("install: service start failed: %v", err)
-		// Not fatal: it will start automatically at next boot.
+		logger.Printf("install: service start failed: %v (will start at next boot)", err)
 	}
-
-	// 3. Make it visible + removable in Programs & Features.
 	if err := winutil.WriteUninstallEntry(config.Version); err != nil {
 		logger.Printf("install: uninstall entry failed: %v", err)
 	}
+	logger.Printf("install: projectBV installed machine-wide and running")
+}
 
-	logger.Printf("install: projectBV installed and running")
+// perUserInstall installs the agent for the current user only (no admin): copies
+// it into AppData, auto-starts it at login via the Run key, and launches it now.
+func perUserInstall(logger *log.Logger) {
+	dst := config.UserAgentExePath()
+	if err := writeAgent(dst); err != nil {
+		logger.Printf("install: writing agent failed: %v", err)
+		os.Exit(1)
+	}
+	if err := winutil.SetRunKey(dst); err != nil {
+		logger.Printf("install: run-key failed: %v", err)
+		os.Exit(1)
+	}
+	if err := winutil.WriteUserUninstallEntry(config.Version); err != nil {
+		logger.Printf("install: user uninstall entry failed: %v", err)
+	}
+	// Start it now so the user doesn't have to log out/in first.
+	if err := exec.Command(dst).Start(); err != nil {
+		logger.Printf("install: could not start agent now: %v (starts at next login)", err)
+	}
+	logger.Printf("install: projectBV installed per-user and running")
 }
 
 // writeAgent writes the installed agent binary to dst. It prefers the embedded

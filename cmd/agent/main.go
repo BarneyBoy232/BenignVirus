@@ -46,23 +46,36 @@ func main() {
 	}
 }
 
-// fullUninstall stops and removes the service, removes the Programs & Features
-// entry, and deletes the data + install directories. Needs admin, so it
-// self-elevates if launched unprivileged (e.g. from Add/Remove Programs).
+// fullUninstall removes projectBV whether it was installed machine-wide (service)
+// or per-user (Run key). A machine install needs admin to remove the service +
+// Program Files, so it self-elevates only in that case; a per-user install
+// removes cleanly with no admin.
 func fullUninstall(logger *log.Logger) {
-	if !winutil.IsAdmin() {
+	machineInstalled := fileExists(config.AgentExePath())
+	if machineInstalled && !winutil.IsAdmin() {
 		if err := winutil.RelaunchElevated([]string{"--uninstall"}); err != nil {
 			logger.Printf("uninstall: could not elevate: %v", err)
 			os.Exit(1)
 		}
 		return
 	}
+
+	// Machine-wide artifacts (no-ops / ignored if not present or not admin).
 	_ = winsvc.Control(logger, "stop")
 	_ = winsvc.Control(logger, "uninstall")
 	_ = winutil.RemoveUninstallEntry()
-	_ = os.RemoveAll(config.DataDir())
-	// InstallDir may hold this running exe; remove best-effort. Anything left
-	// (a locked exe) can be deleted on next boot by the user or the antidote.
 	_ = os.RemoveAll(config.InstallDir())
+
+	// Per-user artifacts.
+	_ = winutil.RemoveRunKey()
+	_ = winutil.RemoveUserUninstallEntry()
+	_ = os.RemoveAll(config.UserInstallDir())
+
+	_ = os.RemoveAll(config.DataDir())
 	logger.Printf("uninstall: complete")
+}
+
+func fileExists(p string) bool {
+	_, err := os.Stat(p)
+	return err == nil
 }
