@@ -1,0 +1,26 @@
+{
+  "apps": [
+    {
+      "name": "ExampleApp",
+      "version": "1.2.0",
+      "url": "http://deployhost:8080/apps/ExampleApp-1.2.0.msi",
+      "sha256": "REPLACE_WITH_SHA256_OF_THE_INSTALLER"
+    },
+    {
+      "name": "AnotherTool",
+      "version": "3.0.1",
+      "type": "app",
+      "url": "http://deployhost:8080/apps/AnotherTool-Setup.exe",
+      "sha256": "REPLACE_WITH_SHA256_OF_THE_INSTALLER",
+      "silentArgs": ["/VERYSILENT", "/NORESTART"]
+    },
+    {
+      "name": "AppConfig",
+      "version": "1.0.0",
+      "type": "file",
+      "url": "http://deployhost:8080/files/config.json",
+      "sha256": "REPLACE_WITH_SHA256_OF_THE_FILE",
+      "dest": "C:\\ProgramData\\MyApp\\config.json"
+    }
+  ]
+}

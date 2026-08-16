@@ -1,0 +1,14 @@
+# --- Secrets: keep local, NEVER commit ---
+# Real Tailscale auth keys live in these. Copy the .example files and fill them in.
+/internal/config/embedded-config.json
+/run-host.ps1
+
+# --- Build output ---
+/dist/
+
+# --- Local deploy-host data (staged installers/files + tsnet state) ---
+/deploy/
+
+# --- Go / misc ---
+*.test
+*.out

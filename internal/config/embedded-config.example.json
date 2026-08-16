@@ -1,0 +1,6 @@
+{
+  "authKey": "tskey-auth-REPLACE-ME",
+  "manifestURL": "http://deployhost:8080/manifest.json",
+  "intervalMinutes": 30,
+  "hostnamePrefix": "projectbv"
+}
