@@ -10,6 +10,7 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 
 const manifestCol = collection(db, 'from_projectbv', 'fleet', 'manifest')
 const devicesCol = collection(db, 'from_projectbv', 'fleet', 'devices')
+const workshopCol = collection(db, 'from_projectbv', 'fleet', 'workshop')
 
 // SHA-256 of a file, computed in the browser (matches what the agent verifies).
 async function sha256hex(file) {
@@ -52,6 +53,25 @@ export async function deployFile({ name, version, file, dest }) {
 }
 
 export async function removeEntry(name) {
-  await ensureAuth()
   await deleteDoc(doc(manifestCol, name))
+}
+
+// --- Workshop: a directory of linked builds/pages (Steam-Workshop style) -----
+// Each entry just points at a page — an internal route in this app, or an
+// external URL for a separate app you (or a future build) create.
+
+export async function listWorkshop() {
+  const snap = await getDocs(workshopCol)
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .sort((a, b) => (b.created || 0) - (a.created || 0))
+}
+
+export async function addWorkshop({ title, description, url }) {
+  const id = crypto.randomUUID()
+  await setDoc(doc(workshopCol, id), { title, description, url, created: Date.now() })
+}
+
+export async function removeWorkshop(id) {
+  await deleteDoc(doc(workshopCol, id))
 }
