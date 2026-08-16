@@ -58,6 +58,26 @@ func (n *Node) HTTPClient() *http.Client {
 	return n.srv.HTTPClient()
 }
 
+// IP returns this node's tailnet IPv4 address (used as the tunnel address other
+// apps connect to), or "" if it can't be determined yet.
+func (n *Node) IP(ctx context.Context) string {
+	if n.srv == nil {
+		return ""
+	}
+	lc, err := n.srv.LocalClient()
+	if err != nil {
+		return ""
+	}
+	st, err := lc.Status(ctx)
+	if err != nil || st.Self == nil {
+		return ""
+	}
+	if len(st.Self.TailscaleIPs) > 0 {
+		return st.Self.TailscaleIPs[0].String()
+	}
+	return ""
+}
+
 // Close shuts the node down cleanly.
 func (n *Node) Close() error {
 	if n.srv == nil {

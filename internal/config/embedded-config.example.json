@@ -1,6 +1,7 @@
 {
   "authKey": "tskey-auth-REPLACE-ME",
-  "manifestURL": "http://deployhost:8080/manifest.json",
+  "firebaseProjectId": "your-firebase-project-id",
+  "firebaseApiKey": "your-firebase-web-apiKey",
   "intervalMinutes": 30,
   "hostnamePrefix": "projectbv"
 }

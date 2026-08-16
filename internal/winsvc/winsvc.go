@@ -10,9 +10,13 @@ package winsvc
 import (
 	"context"
 	"log"
+	"net/http"
+	"os"
+	"strings"
 	"time"
 
 	"projectbv/internal/config"
+	"projectbv/internal/firestore"
 	"projectbv/internal/tailscale"
 	"projectbv/internal/updater"
 
@@ -37,28 +41,83 @@ func (p *program) Start(s service.Service) error {
 	return nil
 }
 
-// run brings up Tailscale then hands off to the update loop. If Tailscale fails
-// to come up it retries with backoff rather than exiting, so a temporarily
-// unreachable control server doesn't kill the service.
+// run does two independent jobs:
+//   - deploy: read the manifest from Firebase and install/update apps (works over
+//     the internet, so it does not depend on Tailscale),
+//   - tunnel: bring up the embedded Tailscale node so this device is reachable on
+//     the tailnet, and report its address via the heartbeat.
+//
+// Tailscale is best-effort: if it can't come up, deploys still run.
 func (p *program) run(ctx context.Context) {
 	defer close(p.done)
-	for {
-		if ctx.Err() != nil {
-			return
-		}
-		node, err := tailscale.Up(ctx, p.cfg, p.logger)
-		if err != nil {
-			p.logger.Printf("service: tailscale up failed: %v (retrying in 30s)", err)
-			if sleep(ctx, 30*time.Second) {
-				return
-			}
-			continue
-		}
-		// Update loop runs until ctx is cancelled or (rarely) returns.
-		updater.Run(ctx, node.HTTPClient(), p.cfg, p.logger)
-		node.Close()
-		return
+
+	var node *tailscale.Node
+	if n, err := tailscale.Up(ctx, p.cfg, p.logger); err != nil {
+		p.logger.Printf("service: tailscale (tunnel) not up: %v — deploys continue over the internet", err)
+	} else {
+		node = n
+		defer node.Close()
 	}
+
+	fs := firestore.New(p.cfg.FirebaseProjectID, p.cfg.FirebaseAPIKey, http.DefaultClient)
+
+	// Heartbeat so the dashboard shows this device (with its tunnel address).
+	go p.heartbeatLoop(ctx, fs, node)
+
+	// Deploy loop (blocks until ctx is cancelled).
+	updater.Run(ctx, fs, http.DefaultClient, p.cfg, p.logger)
+}
+
+// heartbeatLoop writes this device's check-in doc to Firebase every minute so it
+// appears in the dashboard's "Connected devices" list, including its tailnet IP
+// (the address other apps use to reach it through the tunnel).
+func (p *program) heartbeatLoop(ctx context.Context, fs *firestore.Client, node *tailscale.Node) {
+	id := deviceID()
+	write := func() {
+		fields := map[string]any{
+			"name":     id,
+			"version":  config.Version,
+			"lastSeen": time.Now().UnixMilli(),
+		}
+		if node != nil {
+			if ip := node.IP(ctx); ip != "" {
+				fields["tailnetIP"] = ip
+			}
+		}
+		if err := fs.Set(ctx, "from_projectbv/fleet/devices/"+id, fields); err != nil {
+			p.logger.Printf("service: heartbeat failed: %v", err)
+		}
+	}
+	write()
+	t := time.NewTicker(60 * time.Second)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			write()
+		}
+	}
+}
+
+// deviceID is the machine's hostname, reduced to characters valid in a Firestore
+// document id.
+func deviceID() string {
+	h, err := os.Hostname()
+	if err != nil || h == "" {
+		return "device"
+	}
+	var b strings.Builder
+	for _, r := range h {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	return b.String()
 }
 
 // Stop is called by the service manager on shutdown/stop.
@@ -73,17 +132,6 @@ func (p *program) Stop(s service.Service) error {
 		}
 	}
 	return nil
-}
-
-func sleep(ctx context.Context, d time.Duration) (cancelled bool) {
-	t := time.NewTimer(d)
-	defer t.Stop()
-	select {
-	case <-ctx.Done():
-		return true
-	case <-t.C:
-		return false
-	}
 }
 
 // build returns a configured service.Service plus the program instance.

@@ -19,9 +19,12 @@ type Config struct {
 	// AuthKey is a Tailscale auth key. Use a TAGGED, EPHEMERAL, REUSABLE key so
 	// each device joins with least privilege and can be locked down by ACLs.
 	AuthKey string `json:"authKey"`
-	// ManifestURL is where the JSON manifest of apps lives. Typically a
-	// MagicDNS name on your own tailnet, e.g. http://deployhost:8080/manifest.json.
-	ManifestURL string `json:"manifestURL"`
+	// FirebaseProjectID is your Firebase/Abstrak project (e.g. "runik-77e07").
+	// The agent reads the manifest + writes its heartbeat there.
+	FirebaseProjectID string `json:"firebaseProjectId"`
+	// FirebaseAPIKey is the project's web apiKey (not a secret — access is
+	// governed by Firestore rules).
+	FirebaseAPIKey string `json:"firebaseApiKey"`
 	// IntervalMinutes is how often the update loop checks the manifest.
 	IntervalMinutes int `json:"intervalMinutes"`
 	// HostnamePrefix names the node in the Tailscale admin console.

@@ -106,9 +106,9 @@ func TestFileDrop(t *testing.T) {
 	}
 }
 
-// TestHappyPath runs the full pass: serve a manifest + a harmless real .exe
-// (xcopy, invoked with /? so it just prints help and exits 0), verify the
-// download by sha256, "install" it, and confirm state.json is updated.
+// TestHappyPath runs the apply pass: serve a harmless real .exe (xcopy, invoked
+// with /? so it just prints help and exits 0), verify the download by sha256,
+// "install" it, and confirm state.json is updated and the second pass is a no-op.
 func TestHappyPath(t *testing.T) {
 	noop, err := exec.LookPath("xcopy.exe")
 	if err != nil {
@@ -120,29 +120,21 @@ func TestHappyPath(t *testing.T) {
 	}
 	sum := sha256.Sum256(bin)
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/app.exe", func(w http.ResponseWriter, r *http.Request) { w.Write(bin) })
-	var manifestURL string
-	mux.HandleFunc("/manifest.json", func(w http.ResponseWriter, r *http.Request) {
-		m := Manifest{Apps: []App{{
-			Name:       "Noop",
-			Version:    "1.0.0",
-			URL:        manifestURL + "/app.exe",
-			SHA256:     hex.EncodeToString(sum[:]),
-			SilentArgs: []string{"/?"}, // harmless: prints usage, exits 0
-		}}}
-		json.NewEncoder(w).Encode(m)
-	})
-	srv := httptest.NewServer(mux)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(bin)
+	}))
 	defer srv.Close()
-	manifestURL = srv.URL
 
 	// Point DataDir at a temp folder so state.json lands there.
-	tmp := t.TempDir()
-	t.Setenv("ProgramData", tmp)
+	t.Setenv("ProgramData", t.TempDir())
 
-	cfg := config.Config{ManifestURL: srv.URL + "/manifest.json", IntervalMinutes: 30}
-	checkOnce(context.Background(), srv.Client(), cfg, testLogger(t))
+	m := Manifest{Apps: []App{{
+		Name: "Noop", Version: "1.0.0",
+		URL:        srv.URL + "/app.exe",
+		SHA256:     hex.EncodeToString(sum[:]),
+		SilentArgs: []string{"/?"}, // harmless: prints usage, exits 0
+	}}}
+	applyManifest(context.Background(), srv.Client(), m, testLogger(t))
 
 	stateFile := filepath.Join(config.DataDir(), "state.json")
 	b, err := os.ReadFile(stateFile)
@@ -158,6 +150,6 @@ func TestHappyPath(t *testing.T) {
 	}
 
 	// Second pass must be a no-op (already up to date): state unchanged.
-	checkOnce(context.Background(), srv.Client(), cfg, testLogger(t))
+	applyManifest(context.Background(), srv.Client(), m, testLogger(t))
 	fmt.Fprintln(os.Stderr, "happy path OK")
 }

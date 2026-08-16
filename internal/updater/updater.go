@@ -26,7 +26,12 @@ import (
 	"time"
 
 	"projectbv/internal/config"
+	"projectbv/internal/firestore"
 )
+
+// ManifestCollection is the Firestore path the dashboard writes to and the
+// agent reads its deployments from.
+const ManifestCollection = "from_projectbv/fleet/manifest"
 
 // App is one entry in the manifest. Despite the name it can be either an app to
 // install or a plain file to drop onto the device, selected by Type.
@@ -46,7 +51,7 @@ type App struct {
 	Dest string `json:"dest,omitempty"`
 }
 
-// Manifest is the top-level document at ManifestURL.
+// Manifest is the set of apps read from the Firestore manifest collection.
 type Manifest struct {
 	Apps []App `json:"apps"`
 }
@@ -55,12 +60,13 @@ type Manifest struct {
 type state map[string]string
 
 // Run blocks and drives the update loop until ctx is cancelled. It runs one
-// check immediately, then every cfg.IntervalMinutes.
-func Run(ctx context.Context, client *http.Client, cfg config.Config, logger *log.Logger) {
+// check immediately, then every cfg.IntervalMinutes. The manifest comes from
+// Firestore; downloads (installer/file payloads) use httpClient over the internet.
+func Run(ctx context.Context, fs *firestore.Client, httpClient *http.Client, cfg config.Config, logger *log.Logger) {
 	interval := time.Duration(cfg.IntervalMinutes) * time.Minute
-	logger.Printf("updater: started, checking %q every %v", cfg.ManifestURL, interval)
+	logger.Printf("updater: started, checking the Firebase manifest every %v", interval)
 
-	checkOnce(ctx, client, cfg, logger)
+	checkOnce(ctx, fs, httpClient, logger)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -70,21 +76,26 @@ func Run(ctx context.Context, client *http.Client, cfg config.Config, logger *lo
 			logger.Printf("updater: stopping")
 			return
 		case <-ticker.C:
-			checkOnce(ctx, client, cfg, logger)
+			checkOnce(ctx, fs, httpClient, logger)
 		}
 	}
 }
 
-// checkOnce runs a single manifest pass. Errors are logged, never fatal — the
-// loop keeps going and retries next tick.
-func checkOnce(ctx context.Context, client *http.Client, cfg config.Config, logger *log.Logger) {
-	m, err := fetchManifest(ctx, client, cfg.ManifestURL)
+// checkOnce fetches the manifest from Firebase and applies it. Errors are
+// logged, never fatal — the loop keeps going and retries next tick.
+func checkOnce(ctx context.Context, fs *firestore.Client, httpClient *http.Client, logger *log.Logger) {
+	m, err := fetchManifest(ctx, fs)
 	if err != nil {
 		logger.Printf("updater: fetch manifest failed: %v", err)
 		return
 	}
-	st := loadState(logger)
+	applyManifest(ctx, httpClient, m, logger)
+}
 
+// applyManifest installs/updates every listed app that is missing or outdated.
+// Split from fetching so it can be tested against a Manifest directly.
+func applyManifest(ctx context.Context, httpClient *http.Client, m Manifest, logger *log.Logger) {
+	st := loadState(logger)
 	for _, app := range m.Apps {
 		if app.Name == "" || app.URL == "" {
 			logger.Printf("updater: skipping malformed manifest entry %+v", app)
@@ -103,9 +114,9 @@ func checkOnce(ctx context.Context, client *http.Client, cfg config.Config, logg
 		var err error
 		switch strings.ToLower(app.Type) {
 		case "", "app":
-			err = installApp(ctx, client, app, logger)
+			err = installApp(ctx, httpClient, app, logger)
 		case "file":
-			err = installFile(ctx, client, app, logger)
+			err = installFile(ctx, httpClient, app, logger)
 		default:
 			logger.Printf("updater: %q has unknown type %q, skipping", app.Name, app.Type)
 			continue
@@ -120,26 +131,34 @@ func checkOnce(ctx context.Context, client *http.Client, cfg config.Config, logg
 	}
 }
 
-func fetchManifest(ctx context.Context, client *http.Client, url string) (Manifest, error) {
+// fetchManifest reads the manifest collection from Firestore and maps each
+// document to an App.
+func fetchManifest(ctx context.Context, fs *firestore.Client) (Manifest, error) {
+	docs, err := fs.List(ctx, ManifestCollection)
+	if err != nil {
+		return Manifest{}, err
+	}
 	var m Manifest
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return m, err
+	for _, d := range docs {
+		app := App{
+			Name:    asString(d["name"]),
+			Version: asString(d["version"]),
+			URL:     asString(d["url"]),
+			SHA256:  asString(d["sha256"]),
+			Type:    asString(d["type"]),
+			Dest:    asString(d["dest"]),
+		}
+		if sa, ok := d["silentArgs"].([]string); ok {
+			app.SilentArgs = sa
+		}
+		m.Apps = append(m.Apps, app)
 	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return m, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return m, fmt.Errorf("manifest HTTP %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20)) // 4 MB cap
-	if err != nil {
-		return m, err
-	}
-	err = json.Unmarshal(body, &m)
-	return m, err
+	return m, nil
+}
+
+func asString(v any) string {
+	s, _ := v.(string)
+	return s
 }
 
 // downloadVerified downloads app.URL to a temp file with the given extension,
