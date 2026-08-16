@@ -23,33 +23,28 @@ var (
 )
 
 // trefoilAt returns the colour of a single pixel (px,py) for an icon of the
-// given size. It draws a rounded-square yellow tile with the black trefoil
-// (central disk + three 60°-wide blades) on top, following the ISO proportions.
+// given size. It draws the classic radiation symbol: a black outer ring, a
+// yellow disc inside it, and the black trefoil (central disk + three 60°-wide
+// blades) on top — matching the standard sign.
 func trefoilAt(px, py, size int) color.RGBA {
 	fs := float64(size)
 	cx, cy := fs/2, fs/2
 	dx, dy := float64(px)+0.5-cx, float64(py)+0.5-cy
 	d := math.Hypot(dx, dy)
 
-	// Rounded-square background tile. Anything outside it is transparent so the
-	// icon has soft corners rather than a hard square.
-	half := fs / 2
-	corner := fs * 0.18
-	ax, ay := math.Abs(dx), math.Abs(dy)
-	inTile := false
-	switch {
-	case ax <= half-corner || ay <= half-corner:
-		inTile = ax <= half && ay <= half
-	default:
-		inTile = math.Hypot(ax-(half-corner), ay-(half-corner)) <= corner
+	outerR := fs * 0.49 // outer edge of the black ring
+	diskR := fs * 0.44  // yellow disc radius (ring is between diskR and outerR)
+
+	if d > outerR {
+		return clear // transparent outside the badge
 	}
-	if !inTile {
-		return clear
+	if d > diskR {
+		return black // the outer ring
 	}
 
 	// ISO trefoil geometry: central disk radius R, blades from 1.5R to 5R,
 	// each blade 60° wide (±30° from its centre), centres 120° apart.
-	R := fs * 0.09
+	R := fs * 0.082
 	inner := 1.5 * R
 	outer := 5.0 * R
 
