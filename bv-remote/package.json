@@ -6,5 +6,8 @@
   "workspaces": [
     "shared",
     "agent"
-  ]
+  ],
+  "devDependencies": {
+    "7zip-bin": "^5.2.0"
+  }
 }

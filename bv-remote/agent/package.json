@@ -4,9 +4,11 @@
   "private": true,
   "type": "module",
   "main": "src/main.js",
+  "author": "projectBV",
   "description": "BV Remote device agent — runs on each fleet device, deployed via projectBV.",
   "scripts": {
-    "start": "electron ."
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
   },
   "dependencies": {
     "@bv/shared": "*",
@@ -14,6 +16,24 @@
     "firebase": "^10.13.0"
   },
   "devDependencies": {
-    "electron": "^31.0.0"
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.projectbv.remoteagent",
+    "productName": "BVRemoteAgent",
+    "electronVersion": "31.7.7",
+    "directories": { "output": "dist" },
+    "files": ["src/**/*"],
+    "win": {
+      "target": "nsis",
+      "artifactName": "BV-Remote-Agent-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": true,
+      "runAfterFinish": false,
+      "allowToChangeInstallationDirectory": false
+    }
   }
 }

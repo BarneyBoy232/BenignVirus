@@ -34,6 +34,8 @@ app.on('window-all-closed', () => {})
 let tray = null
 
 app.whenReady().then(() => {
+  // Start automatically when the device logs in, so a deployed agent is always up.
+  try { app.setLoginItemSettings({ openAtLogin: true }) } catch {}
   createTray()
   startHeartbeat()
   startCommandBus()
