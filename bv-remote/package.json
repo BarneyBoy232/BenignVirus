@@ -2,12 +2,5 @@
   "name": "bv-remote",
   "private": true,
   "version": "0.1.0",
-  "description": "BV Remote — remote-desktop + admin tool for the projectBV fleet. Two Electron apps (device agent + operator console) bridged by Firebase.",
-  "workspaces": [
-    "shared",
-    "agent"
-  ],
-  "devDependencies": {
-    "7zip-bin": "^5.2.0"
-  }
+  "description": "BV Remote — the device-side agent for the projectBV fleet. The admin UI lives in the projectBV website (web/tools/remote). Build the installer with: cd agent && npm install && npm run dist"
 }

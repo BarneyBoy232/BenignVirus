@@ -27,10 +27,10 @@ jobs:
           node-version: '20'
       - name: Install dependencies
         run: npm install
-        working-directory: bv-remote
+        working-directory: bv-remote/agent
       - name: Build the installer
-        run: npm run dist -w @bv/agent
-        working-directory: bv-remote
+        run: npm run dist
+        working-directory: bv-remote/agent
       - name: Publish installer to the "agent-latest" release
         uses: softprops/action-gh-release@v2
         with:

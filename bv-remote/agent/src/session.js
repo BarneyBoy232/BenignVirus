@@ -7,8 +7,8 @@ import { BrowserWindow, desktopCapturer, ipcMain } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { doc, setDoc, onSnapshot, collection, addDoc, getDocs, deleteDoc } from 'firebase/firestore'
-import { db, PATHS, signBlob, verifyBlob } from '@bv/shared'
-import { TOKEN } from '@bv/shared/secret'
+import { db, PATHS, signBlob, verifyBlob } from './shared/index.js'
+import { TOKEN } from './shared/secret.js'
 import { inject } from './input.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
