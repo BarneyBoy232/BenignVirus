@@ -1,0 +1,167 @@
+// BV Remote — device agent (Electron main process, no visible window).
+//
+// What this does in Phase 1:
+//   • runs quietly in the tray on a fleet device,
+//   • writes a presence heartbeat so the console knows this device is reachable,
+//   • listens on the Firebase command bus and answers commands whose signature
+//     proves the sender holds the shared secret.
+//
+// Phase 2 fills in the real command handlers (popup, apps, tabs, perf); Phase 3
+// adds the live screen/control session. For now every command except `ping` replies
+// "not implemented yet" so the wiring is provable end to end.
+import os from 'node:os'
+import { execFile } from 'node:child_process'
+import { app, Tray, Menu, nativeImage } from 'electron'
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore'
+import { db, PATHS, CMD, verifyCommand, deviceId } from '@bv/shared'
+import { TOKEN } from '@bv/shared/secret'
+import { showPopup } from './popup.js'
+import { listProcs, killProc } from './procs.js'
+import { listApps, launchApp } from './apps.js'
+import { listTabs, openTab, closeTab, enableTabs } from './tabs.js'
+import { snapshot } from './perf.js'
+import { startSession, stopSession, isSessionActive } from './session.js'
+
+const ID = deviceId(os.hostname())
+const HEARTBEAT_MS = 30 * 1000
+
+// Only one agent per machine.
+if (!app.requestSingleInstanceLock()) app.quit()
+
+// A tray-only app must never quit just because it has no windows.
+app.on('window-all-closed', () => {})
+
+let tray = null
+
+app.whenReady().then(() => {
+  createTray()
+  startHeartbeat()
+  startCommandBus()
+  console.log(`[bv-agent] up as "${ID}"`)
+})
+
+// --- tray ----------------------------------------------------------------
+// Placeholder 1x1 icon so Windows has something to show; replaced with the real
+// brand mark in the Phase 4 design pass.
+function createTray() {
+  const icon = nativeImage.createFromDataURL(
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+  )
+  tray = new Tray(icon)
+  tray.setToolTip(`BV Remote agent — ${ID}`)
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      { label: `Device: ${ID}`, enabled: false },
+      { type: 'separator' },
+      { label: 'Quit agent', click: () => app.quit() },
+    ]),
+  )
+}
+
+// --- presence heartbeat ---------------------------------------------------
+function startHeartbeat() {
+  const write = () =>
+    setDoc(doc(db(), ...PATHS.agent(ID)), {
+      host: ID,
+      online: true,
+      lastSeen: Date.now(),
+      // Capabilities this build supports — grows as phases land.
+      caps: ['bus', 'popup', 'apps', 'tabs', 'perf', 'reboot', 'session'],
+      version: app.getVersion(),
+    }).catch((e) => console.error('[bv-agent] heartbeat failed:', e.message))
+  write()
+  setInterval(write, HEARTBEAT_MS)
+}
+
+// --- command bus ----------------------------------------------------------
+// Watch this device's command doc. When a NEW, correctly-signed command arrives,
+// run it and write the result back.
+let lastHandled = null
+
+async function startCommandBus() {
+  // Adopt whatever command is ALREADY in the doc as "already seen" without running
+  // it. Firestore replays the last command on every (re)start; without this, an
+  // agent restart would re-execute the last command — harmless for ping, dangerous
+  // once Phase 2 adds kill/launch. Comparing ids (not timestamps) avoids any
+  // clock-skew issues between operator and device.
+  try {
+    const existing = await getDoc(doc(db(), ...PATHS.command(ID)))
+    if (existing.exists() && existing.data()?.id) lastHandled = existing.data().id
+  } catch (e) {
+    console.error('[bv-agent] could not read existing command:', e.message)
+  }
+
+  subscribe()
+}
+
+function subscribe() {
+  onSnapshot(
+    doc(db(), ...PATHS.command(ID)),
+    async (snap) => {
+      const cmd = snap.data()
+      if (!cmd || !cmd.id || cmd.id === lastHandled) return
+
+      // The gate: silently drop anything not signed with the shared secret.
+      const ok = await verifyCommand(cmd, TOKEN).catch(() => false)
+      if (!ok) {
+        console.warn('[bv-agent] dropped command with bad/missing signature')
+        return
+      }
+      lastHandled = cmd.id
+      const result = await handle(cmd).catch((e) => ({ ok: false, output: e.message }))
+      await setDoc(doc(db(), ...PATHS.result(ID)), {
+        id: cmd.id,
+        ok: !!result.ok,
+        output: result.output ?? null,
+        ts: Date.now(),
+      }).catch((e) => console.error('[bv-agent] result write failed:', e.message))
+    },
+    (err) => {
+      // A listener that errors is dead — log it and try to re-establish so the bus
+      // doesn't go silently offline.
+      console.error('[bv-agent] command listener error, reconnecting:', err.message)
+      setTimeout(subscribe, 5000)
+    },
+  )
+}
+
+async function handle(cmd) {
+  const a = cmd.args || {}
+  switch (cmd.cmd) {
+    case CMD.PING:
+      return { ok: true, output: `pong from ${ID}` }
+    case CMD.POPUP:
+      return { ok: true, output: showPopup(a.text, a.seconds) }
+    case CMD.LIST_PROCS:
+      return { ok: true, output: await listProcs() }
+    case CMD.KILL_PROC:
+      return { ok: true, output: await killProc(a.pid) }
+    case CMD.LIST_APPS:
+      return { ok: true, output: await listApps() }
+    case CMD.LAUNCH_APP:
+      return { ok: true, output: await launchApp(a.path) }
+    case CMD.LIST_TABS:
+      return { ok: true, output: await listTabs() }
+    case CMD.OPEN_TAB:
+      return { ok: true, output: await openTab(a.url) }
+    case CMD.CLOSE_TAB:
+      return { ok: true, output: await closeTab(a.targetId) }
+    case CMD.ENABLE_TABS:
+      return { ok: true, output: await enableTabs() }
+    case CMD.PERF:
+      return { ok: true, output: { ...(await snapshot()), sessionActive: isSessionActive() } }
+    case CMD.REBOOT:
+      // Short delay so the result can be written back before the machine goes down.
+      // Await so a failure (e.g. no privilege) is reported as ok:false, not success.
+      await new Promise((res, rej) =>
+        execFile('shutdown', ['/r', '/t', '5', '/c', 'BV Remote: remote reboot'], { windowsHide: true }, (err) => (err ? rej(err) : res())),
+      )
+      return { ok: true, output: { rebooting: true } }
+    case CMD.START_SESSION:
+      return { ok: true, output: await startSession(ID, a.nonce) }
+    case CMD.STOP_SESSION:
+      return { ok: true, output: await stopSession(a.nonce) }
+    default:
+      return { ok: false, output: `unknown command: ${cmd.cmd}` }
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "bv-remote",
+  "private": true,
+  "version": "0.1.0",
+  "description": "BV Remote — remote-desktop + admin tool for the projectBV fleet. Two Electron apps (device agent + operator console) bridged by Firebase.",
+  "workspaces": [
+    "shared",
+    "agent"
+  ]
+}

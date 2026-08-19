@@ -1,0 +1,8 @@
+node_modules/
+dist/
+out/
+release/
+*.log
+# The shared secret in shared/secret.js is per-deployment — set your own before
+# building. The console also lets the operator override it at runtime (the token
+# field, saved to localStorage), so the console never has to ship the real secret.

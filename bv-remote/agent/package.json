@@ -1,0 +1,19 @@
+{
+  "name": "@bv/agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/main.js",
+  "description": "BV Remote device agent — runs on each fleet device, deployed via projectBV.",
+  "scripts": {
+    "start": "electron ."
+  },
+  "dependencies": {
+    "@bv/shared": "*",
+    "@nut-tree-fork/nut-js": "^4.2.0",
+    "firebase": "^10.13.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}
