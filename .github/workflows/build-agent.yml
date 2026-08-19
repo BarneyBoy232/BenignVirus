@@ -1,0 +1,39 @@
+name: Build Remote agent installer
+
+# Builds the BV Remote device agent into a silent Windows installer on a clean
+# Windows runner (where electron-builder's tooling works) and publishes it as a
+# release asset. The dashboard's "Install on all devices" button points at that
+# asset. Runs on any change to the agent, or on demand from the Actions tab.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'bv-remote/agent/**'
+      - 'bv-remote/shared/**'
+      - 'bv-remote/package.json'
+      - '.github/workflows/build-agent.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install dependencies
+        run: npm install
+        working-directory: bv-remote
+      - name: Build the installer
+        run: npm run dist -w @bv/agent
+        working-directory: bv-remote
+      - name: Publish installer to the "agent-latest" release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agent-latest
+          name: Remote agent (latest build)
+          files: bv-remote/agent/dist/*.exe
