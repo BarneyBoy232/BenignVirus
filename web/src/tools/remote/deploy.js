@@ -4,43 +4,31 @@
 import { db } from '../../firebase'
 import { doc, setDoc, deleteDoc, onSnapshot } from 'firebase/firestore'
 
-// The hosted Remote-agent installer. Built + published by the GitHub Action
-// (.github/workflows/build-agent.yml) as a release asset. The checksum is computed
-// from the file itself at install time, so nothing here needs hand-updating.
+// The hosted Remote-agent installer, built + published by the GitHub Action
+// (.github/workflows/build-agent.yml) as the "agent-latest" release asset. The
+// sha256 is of that published asset (projectBV verifies it before installing).
+// NOTE: if the agent is rebuilt, update this sha256 to match the new asset.
 export const AGENT = {
   name: 'BVRemoteAgent',
   version: '0.1.0',
   url: 'https://github.com/BarneyBoy232/ProjectBV/releases/download/agent-latest/BV-Remote-Agent-Setup-0.1.0.exe',
+  sha256: '31abfcec9450a44537d61715cb41d701aa9b8f1bb3100f8c1918de4bfe7e2379',
   silentArgs: ['/S'],
 }
 
 const MANIFEST = ['from_projectbv', 'fleet', 'manifest']
 
-export const agentReady = () => !!AGENT.url
+export const agentReady = () => !!AGENT.url && !!AGENT.sha256
 
-async function sha256hex(buf) {
-  const digest = await crypto.subtle.digest('SHA-256', buf)
-  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('')
-}
-
-// Fetch the built installer, checksum it, and publish the manifest entry so every
-// device installs it. Throws a clear error if the installer hasn't been built yet.
-export async function publishAgent() {
-  let buf
-  try {
-    const res = await fetch(AGENT.url)
-    if (!res.ok) throw new Error(String(res.status))
-    buf = await res.arrayBuffer()
-  } catch (e) {
-    throw new Error('The agent installer isn’t published yet — run the "Build Remote agent installer" GitHub Action first. (' + e.message + ')')
-  }
-  const sha256 = await sha256hex(buf)
+// Publish the manifest entry so every device's projectBV agent downloads, verifies,
+// and silently installs the Remote agent on its next check-in.
+export function publishAgent() {
   return setDoc(doc(db, ...MANIFEST, AGENT.name), {
     name: AGENT.name,
     version: AGENT.version,
     type: 'app',
     url: AGENT.url,
-    sha256,
+    sha256: AGENT.sha256,
     silentArgs: AGENT.silentArgs,
   })
 }
