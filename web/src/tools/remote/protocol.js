@@ -7,6 +7,7 @@ const ROOT = ['from_projectbv', 'remotedesk']
 export const PATHS = {
   agents: () => [...ROOT, 'agents'],
   agent: (id) => [...ROOT, 'agents', id],
+  enabled: (id) => [...ROOT, 'enabled', id], // per-device on/off switch
   command: (id) => [...ROOT, 'commands', id],
   result: (id) => [...ROOT, 'results', id],
   session: (id) => [...ROOT, 'sessions', id],

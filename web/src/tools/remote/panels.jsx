@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { CMD } from './protocol'
-import { runCommand } from './data'
+import { runCommand, setEnabled } from './data'
 import { c, ago } from '../../ui'
 import { LivePanel } from './LivePanel'
 
@@ -29,6 +29,10 @@ export function DevicePanel({ device }) {
     try { await runCommand(device.id, CMD.REBOOT, {}, 10000); setPing({ ok: true, text: 'reboot command sent' }) }
     catch (e) { setPing({ ok: false, text: e.message }) }
   }
+  async function toggleEnabled(on) {
+    setMenuOpen(false)
+    try { await setEnabled(device.id, on) } catch (e) { setPing({ ok: false, text: e.message }) }
+  }
 
   return (
     <>
@@ -38,7 +42,7 @@ export function DevicePanel({ device }) {
             <h2 style={c.h2}>{device.name}</h2>
             <p style={{ ...c.sub, margin: '4px 0 0' }}>
               <span style={c.dot(device.agentOnline)} />
-              {device.hasAgent ? (device.agentOnline ? 'agent online' : `agent offline · last seen ${ago(device.agentLastSeen)}`) : 'no Remote agent installed'}
+              {device.hasAgent ? (device.agentOnline ? `agent online · ${device.enabled ? 'enabled' : 'switched off'}` : `agent offline · last seen ${ago(device.agentLastSeen)}`) : 'no Remote agent installed'}
               {device.fleetOnline ? '  ·  device powered on' : ''}
             </p>
           </div>
@@ -48,8 +52,14 @@ export function DevicePanel({ device }) {
             <button style={{ ...c.ghost, padding: '8px 12px' }} onClick={() => setMenuOpen((v) => !v)} aria-label="More actions">⋯</button>
             {menuOpen && (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 8, padding: 6, zIndex: 10, minWidth: 170, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
-                <button onClick={() => { setMenuOpen(false); reboot() }} disabled={!device.agentOnline}
-                  style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, color: '#ff5c5c', padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13, opacity: device.agentOnline ? 1 : 0.5 }}>
+                {device.hasAgent && device.enabled && (
+                  <button onClick={() => toggleEnabled(false)}
+                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, color: 'var(--text)', padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
+                    Disable control
+                  </button>
+                )}
+                <button onClick={() => { setMenuOpen(false); reboot() }} disabled={!device.agentOnline || !device.enabled}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, color: '#ff5c5c', padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13, opacity: device.agentOnline && device.enabled ? 1 : 0.5 }}>
                   Reboot device
                 </button>
               </div>
@@ -60,6 +70,12 @@ export function DevicePanel({ device }) {
 
       {!device.agentOnline ? (
         <div style={c.empty}>The agent on this device is offline — actions are unavailable until it checks back in.</div>
+      ) : !device.enabled ? (
+        <section style={c.panel}>
+          <h2 style={c.h2}>Remote is switched off on this device</h2>
+          <p style={c.sub}>The agent is installed and running here, but dormant — nothing is captured or controllable, and the person using the device sees nothing. Enable it to take control.</p>
+          <button style={c.primary} onClick={() => toggleEnabled(true)}>Enable control</button>
+        </section>
       ) : (
         <>
           <div style={{ display: 'flex', gap: 6, marginBottom: 16, flexWrap: 'wrap' }}>

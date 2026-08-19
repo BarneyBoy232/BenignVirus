@@ -33,7 +33,7 @@ export default function RemotePage() {
             <div style={c.empty}>No devices yet.</div>
           ) : devices.map((d) => {
             const on = selected === d.id
-            const label = !d.hasAgent ? 'no Remote agent' : d.agentOnline ? 'agent online' : `agent offline · ${ago(d.agentLastSeen)}`
+            const label = !d.hasAgent ? 'no Remote agent' : d.agentOnline ? `online · ${d.enabled ? 'enabled' : 'off'}` : `agent offline · ${ago(d.agentLastSeen)}`
             return (
               <button key={d.id} onClick={() => setSelected(d.id)}
                 style={{ display: 'block', width: '100%', textAlign: 'left', marginBottom: 8, cursor: 'pointer', background: on ? 'var(--panel2)' : 'transparent', border: `1px solid ${on ? 'var(--accent)' : 'var(--line)'}`, color: 'var(--text)', borderRadius: 10, padding: '10px 12px' }}>
@@ -94,7 +94,7 @@ function InstallBanner({ devices }) {
         </div>
       </div>
       {msg && <div style={{ marginTop: 10, fontSize: 13, color: msg.ok ? 'var(--ok)' : '#ff5c5c' }}>{msg.text}</div>}
-      <p style={{ ...c.sub, margin: '10px 0 0', fontSize: 12 }}>projectBV installs fleet-wide, so this reaches every device at once. (Picking specific devices can be added later.)</p>
+      <p style={{ ...c.sub, margin: '10px 0 0', fontSize: 12 }}>Installs on every device, but each one stays <strong>dormant</strong> until you enable it below — so you choose which devices are actually controllable. The person using a device sees nothing either way.</p>
     </section>
   )
 }

@@ -33,14 +33,34 @@ app.on('window-all-closed', () => {})
 
 let tray = null
 
+// Per-device on/off switch. The agent installs on every device but stays DORMANT
+// (ignores all commands) until it's enabled from the console. Default: disabled.
+let enabled = false
+
 app.whenReady().then(() => {
   // Start automatically when the device logs in, so a deployed agent is always up.
   try { app.setLoginItemSettings({ openAtLogin: true }) } catch {}
   createTray()
+  startEnabledWatch()
   startHeartbeat()
   startCommandBus()
   console.log(`[bv-agent] up as "${ID}"`)
 })
+
+// Watch this device's enable switch, set from the console.
+function startEnabledWatch() {
+  onSnapshot(
+    doc(db(), ...PATHS.enabled(ID)),
+    (snap) => {
+      enabled = !!(snap.data() && snap.data().enabled)
+      console.log('[bv-agent] enabled =', enabled)
+    },
+    (err) => {
+      console.error('[bv-agent] enabled watch error, reconnecting:', err.message)
+      setTimeout(startEnabledWatch, 5000)
+    },
+  )
+}
 
 // --- tray ----------------------------------------------------------------
 // Placeholder 1x1 icon so Windows has something to show; replaced with the real
@@ -67,6 +87,7 @@ function startHeartbeat() {
       host: ID,
       online: true,
       lastSeen: Date.now(),
+      enabled, // whether this device is currently switched on for control
       // Capabilities this build supports — grows as phases land.
       caps: ['bus', 'popup', 'apps', 'tabs', 'perf', 'reboot', 'session'],
       version: app.getVersion(),
@@ -107,6 +128,12 @@ function subscribe() {
       const ok = await verifyCommand(cmd, TOKEN).catch(() => false)
       if (!ok) {
         console.warn('[bv-agent] dropped command with bad/missing signature')
+        return
+      }
+      // Dormant until enabled from the console — ignore every command.
+      if (!enabled) {
+        console.warn('[bv-agent] device disabled — ignoring command')
+        lastHandled = cmd.id
         return
       }
       lastHandled = cmd.id

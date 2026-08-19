@@ -2,6 +2,12 @@
 import { db } from '../../firebase'
 import { collection, doc, getDocs, onSnapshot, setDoc } from 'firebase/firestore'
 import { PATHS, FLEET_DEVICES, ONLINE_MS, makeId, signCommand } from './protocol'
+
+// Turn a device's control on or off (the agent installs everywhere but stays
+// dormant until enabled here).
+export function setEnabled(deviceId, on) {
+  return setDoc(doc(db, ...PATHS.enabled(deviceId)), { enabled: !!on, ts: Date.now() })
+}
 import { TOKEN } from './secret'
 
 function toMillis(v) {
@@ -32,13 +38,14 @@ export async function loadDevices() {
       hasAgent: !!a,
       agentOnline: !!(a && a.online && agentSeen && now - agentSeen < ONLINE_MS),
       agentLastSeen: agentSeen,
+      enabled: !!(a && a.enabled),
     }
   })
   agentSnap.forEach((d) => {
     if (rows.some((r) => r.id === d.id)) return
     const a = d.data()
     const agentSeen = toMillis(a.lastSeen)
-    rows.push({ id: d.id, name: a.host || d.id, fleetOnline: false, hasAgent: true, agentOnline: !!(a.online && agentSeen && now - agentSeen < ONLINE_MS), agentLastSeen: agentSeen })
+    rows.push({ id: d.id, name: a.host || d.id, fleetOnline: false, hasAgent: true, agentOnline: !!(a.online && agentSeen && now - agentSeen < ONLINE_MS), agentLastSeen: agentSeen, enabled: !!a.enabled })
   })
   rows.sort((x, y) => x.name.localeCompare(y.name))
   return rows
