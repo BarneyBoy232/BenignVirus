@@ -12,7 +12,7 @@ export const AGENT = {
   name: 'BVRemoteAgent',
   version: '0.1.0',
   url: 'https://github.com/BarneyBoy232/ProjectBV/releases/download/agent-latest/BV-Remote-Agent-Setup-0.1.0.exe',
-  sha256: '31abfcec9450a44537d61715cb41d701aa9b8f1bb3100f8c1918de4bfe7e2379',
+  sha256: 'be0614d461c1ca7e5a90b547e51b25f2396e314103b97f481b126accef4a0345',
   silentArgs: ['/S'],
 }
 
