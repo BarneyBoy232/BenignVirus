@@ -20,7 +20,7 @@ export function DevicePanel({ device }) {
   // The agent switches on/off instantly, but its heartbeat status lags ~30s — reflect
   // the change immediately so Enable/Disable feels responsive.
   const [enabledOverride, setEnabledOverride] = useState(null)
-  const isEnabled = enabledOverride !== null ? enabledOverride : isEnabled
+  const isEnabled = enabledOverride !== null ? enabledOverride : device.enabled
 
   async function doPing() {
     setPinging(true); setPing(null)
