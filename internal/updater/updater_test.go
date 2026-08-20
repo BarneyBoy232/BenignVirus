@@ -134,7 +134,7 @@ func TestHappyPath(t *testing.T) {
 		SHA256:     hex.EncodeToString(sum[:]),
 		SilentArgs: []string{"/?"}, // harmless: prints usage, exits 0
 	}}}
-	applyManifest(context.Background(), srv.Client(), m, testLogger(t))
+	applyManifest(context.Background(), srv.Client(), m, "test-host", testLogger(t))
 
 	stateFile := filepath.Join(config.DataDir(), "state.json")
 	b, err := os.ReadFile(stateFile)
@@ -150,6 +150,50 @@ func TestHappyPath(t *testing.T) {
 	}
 
 	// Second pass must be a no-op (already up to date): state unchanged.
-	applyManifest(context.Background(), srv.Client(), m, testLogger(t))
+	applyManifest(context.Background(), srv.Client(), m, "test-host", testLogger(t))
 	fmt.Fprintln(os.Stderr, "happy path OK")
+}
+
+// TestPerDeviceTargeting proves an entry only installs on a device named in its
+// targets list, and is skipped everywhere else.
+func TestPerDeviceTargeting(t *testing.T) {
+	noop, err := exec.LookPath("xcopy.exe")
+	if err != nil {
+		t.Skip("xcopy.exe not found")
+	}
+	bin, _ := os.ReadFile(noop)
+	sum := sha256.Sum256(bin)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Write(bin) }))
+	defer srv.Close()
+
+	mk := func() Manifest {
+		return Manifest{Apps: []App{{
+			Name: "Targeted", Version: "1.0.0", URL: srv.URL + "/app.exe",
+			SHA256: hex.EncodeToString(sum[:]), SilentArgs: []string{"/?"},
+			Targets: []string{"alpha", "bravo"},
+		}}}
+	}
+	readState := func() map[string]string {
+		b, err := os.ReadFile(filepath.Join(config.DataDir(), "state.json"))
+		if err != nil {
+			return map[string]string{}
+		}
+		var st map[string]string
+		_ = json.Unmarshal(b, &st)
+		return st
+	}
+
+	// A device NOT in the list: entry is skipped, nothing installed.
+	t.Setenv("ProgramData", t.TempDir())
+	applyManifest(context.Background(), srv.Client(), mk(), "charlie", testLogger(t))
+	if _, ok := readState()["Targeted"]; ok {
+		t.Fatal("entry installed on a non-targeted device")
+	}
+
+	// A device IN the list: entry installs.
+	t.Setenv("ProgramData", t.TempDir())
+	applyManifest(context.Background(), srv.Client(), mk(), "bravo", testLogger(t))
+	if readState()["Targeted"] != "1.0.0" {
+		t.Fatalf("entry did not install on a targeted device, state=%v", readState())
+	}
 }

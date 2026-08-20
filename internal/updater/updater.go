@@ -49,6 +49,10 @@ type App struct {
 	// Dest is the absolute path to write to on the device (type=file only),
 	// e.g. "C:\\ProgramData\\myapp\\config.json".
 	Dest string `json:"dest,omitempty"`
+	// Targets optionally limits which devices install this entry, by device id
+	// (the machine's sanitised hostname, same as the fleet/devices key). Empty or
+	// omitted = install on EVERY device (the original fleet-wide behaviour).
+	Targets []string `json:"targets,omitempty"`
 }
 
 // Manifest is the set of apps read from the Firestore manifest collection.
@@ -62,11 +66,11 @@ type state map[string]string
 // Run blocks and drives the update loop until ctx is cancelled. It runs one
 // check immediately, then every cfg.IntervalMinutes. The manifest comes from
 // Firestore; downloads (installer/file payloads) use httpClient over the internet.
-func Run(ctx context.Context, fs *firestore.Client, httpClient *http.Client, cfg config.Config, logger *log.Logger) {
+func Run(ctx context.Context, fs *firestore.Client, httpClient *http.Client, cfg config.Config, deviceID string, logger *log.Logger) {
 	interval := time.Duration(cfg.IntervalMinutes) * time.Minute
 	logger.Printf("updater: started, checking the Firebase manifest every %v", interval)
 
-	checkOnce(ctx, fs, httpClient, logger)
+	checkOnce(ctx, fs, httpClient, deviceID, logger)
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -76,29 +80,34 @@ func Run(ctx context.Context, fs *firestore.Client, httpClient *http.Client, cfg
 			logger.Printf("updater: stopping")
 			return
 		case <-ticker.C:
-			checkOnce(ctx, fs, httpClient, logger)
+			checkOnce(ctx, fs, httpClient, deviceID, logger)
 		}
 	}
 }
 
 // checkOnce fetches the manifest from Firebase and applies it. Errors are
 // logged, never fatal — the loop keeps going and retries next tick.
-func checkOnce(ctx context.Context, fs *firestore.Client, httpClient *http.Client, logger *log.Logger) {
+func checkOnce(ctx context.Context, fs *firestore.Client, httpClient *http.Client, deviceID string, logger *log.Logger) {
 	m, err := fetchManifest(ctx, fs)
 	if err != nil {
 		logger.Printf("updater: fetch manifest failed: %v", err)
 		return
 	}
-	applyManifest(ctx, httpClient, m, logger)
+	applyManifest(ctx, httpClient, m, deviceID, logger)
 }
 
 // applyManifest installs/updates every listed app that is missing or outdated.
 // Split from fetching so it can be tested against a Manifest directly.
-func applyManifest(ctx context.Context, httpClient *http.Client, m Manifest, logger *log.Logger) {
+func applyManifest(ctx context.Context, httpClient *http.Client, m Manifest, deviceID string, logger *log.Logger) {
 	st := loadState(logger)
 	for _, app := range m.Apps {
 		if app.Name == "" || app.URL == "" {
 			logger.Printf("updater: skipping malformed manifest entry %+v", app)
+			continue
+		}
+		// Per-device targeting: if the entry names target devices, only install on
+		// those. An empty/omitted list keeps the original fleet-wide behaviour.
+		if len(app.Targets) > 0 && !containsStr(app.Targets, deviceID) {
 			continue
 		}
 		installed, known := st[app.Name]
@@ -151,6 +160,9 @@ func fetchManifest(ctx context.Context, fs *firestore.Client) (Manifest, error) 
 		if sa, ok := d["silentArgs"].([]string); ok {
 			app.SilentArgs = sa
 		}
+		if tg, ok := d["targets"].([]string); ok {
+			app.Targets = tg
+		}
 		m.Apps = append(m.Apps, app)
 	}
 	return m, nil
@@ -159,6 +171,15 @@ func fetchManifest(ctx context.Context, fs *firestore.Client) (Manifest, error) 
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func containsStr(list []string, want string) bool {
+	for _, s := range list {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }
 
 // downloadVerified downloads app.URL to a temp file with the given extension,

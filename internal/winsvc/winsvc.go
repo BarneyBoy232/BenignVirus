@@ -64,8 +64,9 @@ func (p *program) run(ctx context.Context) {
 	// Heartbeat so the dashboard shows this device (with its tunnel address).
 	go p.heartbeatLoop(ctx, fs, node)
 
-	// Deploy loop (blocks until ctx is cancelled).
-	updater.Run(ctx, fs, http.DefaultClient, p.cfg, p.logger)
+	// Deploy loop (blocks until ctx is cancelled). Pass this device's id so the
+	// updater can honour per-device targeting in the manifest.
+	updater.Run(ctx, fs, http.DefaultClient, p.cfg, deviceID(), p.logger)
 }
 
 // heartbeatLoop writes this device's check-in doc to Firebase every minute so it
