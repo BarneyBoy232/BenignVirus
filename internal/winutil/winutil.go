@@ -134,6 +134,14 @@ func CopyFile(src, dst string) error {
 	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
 		return err
 	}
+	// Copying a file onto itself would truncate it to nothing and report success.
+	// Callers here copy agent binaries around during an update, so that would
+	// destroy the very thing being protected.
+	if a, err := os.Stat(src); err == nil {
+		if b, err := os.Stat(dst); err == nil && os.SameFile(a, b) {
+			return nil
+		}
+	}
 	in, err := os.Open(src)
 	if err != nil {
 		return err

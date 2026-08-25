@@ -45,7 +45,7 @@ data lives under the `from_projectbv/fleet/...` partition:
 | Path | Shape | Written by |
 |---|---|---|
 | `from_projectbv/fleet/devices/{hostname}` | `{ name, version, lastSeen (ms epoch), tailnetIP }` | the agents (heartbeat) |
-| `from_projectbv/fleet/manifest/{name}` | `{ name, version, type:'app'\|'file', url, sha256, dest?, silentArgs? }` | the dashboard |
+| `from_projectbv/fleet/manifest/{name}` | `{ name, version, type:'app'\|'file', url, sha256, dest?, silentArgs?, targets?, launch?, scope? }` | the dashboard |
 
 Storage bucket: `runik-77e07.firebasestorage.app`; payloads live under `projectbv/`.
 
@@ -79,6 +79,28 @@ Every device's agent then downloads it, **verifies the sha256**, and installs it
 silently (`.msi` → `msiexec /i <f> /quiet /norestart`; `.exe` → `/S` or your
 `silentArgs`). **Bump the version** to push an update; `type:'file'` with a `dest`
 just drops a file at that path (no execution).
+
+Two optional fields shape *where* and *how* it lands:
+
+- **`targets: [deviceId, …]`** — install on those devices only (device id = the
+  machine's hostname, the same key as `fleet/devices`). Omit it for the whole fleet.
+- **`launch: "%LOCALAPPDATA%\Programs\YourApp\YourApp.exe"`** — your app's own
+  exe. The agent starts it in the signed-in user's session right after installing,
+  and starts it again on any later check where it isn't running, so a deployed app
+  is actually *running* rather than merely installed. Make your app hold a
+  single-instance lock. `%LOCALAPPDATA%`, `%APPDATA%` and `%USERPROFILE%` are
+  expanded against that signed-in user, never the service account.
+
+- **`scope: "user"`** — run the installer as the signed-in person, inside their
+  session. Per-user installers need this; without it the agent (a SYSTEM service)
+  installs them into the service account's profile. Omit it for a machine-wide
+  `.msi`, which needs the agent's own admin rights.
+
+**Build your installer to install per-user, with no elevation** (electron-builder:
+`nsis.perMachine: false`). The agent runs installers with plain user rights inside
+the signed-in user's session — an installer manifested `requireAdministrator` makes
+Windows demand an admin password on a standard account, which is exactly the
+hands-on visit projectBV exists to avoid.
 
 ---
 

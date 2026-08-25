@@ -17,14 +17,23 @@ function toMillis(v) {
 }
 
 // Every projectBV fleet device, annotated with whether the Remote agent is live on it.
+// The on/off switches are read separately from the agents' own heartbeats: a device
+// can be switched on before its agent has ever checked in, and the console has to
+// show that rather than pretend the device is off.
 export async function loadDevices() {
-  const [fleetSnap, agentSnap] = await Promise.all([
+  const [fleetSnap, agentSnap, switchSnap] = await Promise.all([
     getDocs(collection(db, ...FLEET_DEVICES)),
     getDocs(collection(db, ...PATHS.agents())),
+    getDocs(collection(db, ...PATHS.enabledAll())),
   ])
   const agents = new Map()
   agentSnap.forEach((d) => agents.set(d.id, d.data()))
+  const switches = new Map()
+  switchSnap.forEach((d) => switches.set(d.id, !!(d.data() || {}).enabled))
   const now = Date.now()
+  // The switch is the operator's intent and wins; the heartbeat is what the agent
+  // last reported, used only where no switch has ever been set.
+  const isEnabled = (id, a) => (switches.has(id) ? switches.get(id) : !!(a && a.enabled))
 
   const rows = fleetSnap.docs.map((d) => {
     const f = d.data()
@@ -38,14 +47,14 @@ export async function loadDevices() {
       hasAgent: !!a,
       agentOnline: !!(a && a.online && agentSeen && now - agentSeen < ONLINE_MS),
       agentLastSeen: agentSeen,
-      enabled: !!(a && a.enabled),
+      enabled: isEnabled(d.id, a),
     }
   })
   agentSnap.forEach((d) => {
     if (rows.some((r) => r.id === d.id)) return
     const a = d.data()
     const agentSeen = toMillis(a.lastSeen)
-    rows.push({ id: d.id, name: a.host || d.id, fleetOnline: false, hasAgent: true, agentOnline: !!(a.online && agentSeen && now - agentSeen < ONLINE_MS), agentLastSeen: agentSeen, enabled: !!a.enabled })
+    rows.push({ id: d.id, name: a.host || d.id, fleetOnline: false, hasAgent: true, agentOnline: !!(a.online && agentSeen && now - agentSeen < ONLINE_MS), agentLastSeen: agentSeen, enabled: isEnabled(d.id, a) })
   })
   rows.sort((x, y) => x.name.localeCompare(y.name))
   return rows

@@ -1,0 +1,104 @@
+name: Build fleet agent
+
+# Builds the agent installer (projectBV-key.exe) and records where it lives, so
+# updating the fleet agent is one click in the dashboard with no file to pick and
+# no version to type. Without this, the only way to get new agent code onto the
+# devices is to hand-upload the built exe — the devices can only install bytes
+# they can download, and a device being online only proves the OLD agent is alive.
+#
+# The key embeds internal/config/embedded-config.json, which is deliberately NOT
+# in the repo (it holds a real Tailscale auth key). This workflow writes it from
+# the EMBEDDED_CONFIG repository secret. With that secret unset the job skips, and
+# the dashboard falls back to uploading the file by hand.
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'cmd/**'
+      - 'internal/**'
+      - 'build.ps1'
+      - '.github/workflows/build-key.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Check the signing config is available
+        id: gate
+        shell: bash
+        env:
+          EMBEDDED_CONFIG: ${{ secrets.EMBEDDED_CONFIG }}
+        run: |
+          if [ -z "$EMBEDDED_CONFIG" ]; then
+            echo "EMBEDDED_CONFIG secret is not set — skipping the agent build."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Write the embedded config
+        if: steps.gate.outputs.ready == 'true'
+        shell: bash
+        env:
+          EMBEDDED_CONFIG: ${{ secrets.EMBEDDED_CONFIG }}
+        run: printf '%s' "$EMBEDDED_CONFIG" > internal/config/embedded-config.json
+
+      - name: Build
+        if: steps.gate.outputs.ready == 'true'
+        shell: pwsh
+        run: .\build.ps1
+
+      - name: Test
+        if: steps.gate.outputs.ready == 'true'
+        run: go test ./...
+
+      - name: Publish the agent installer
+        if: steps.gate.outputs.ready == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agent-key-latest
+          name: Fleet agent installer (latest build)
+          files: dist/projectBV-key.exe
+
+      # The dashboard reads this to publish an agent update: the url, version and
+      # checksum all describe the binary just published, so there is nothing to
+      # pick and nothing to type. The release URL ends in .exe, which also matters
+      # — agents older than 1.1.0 reject a download URL carrying a query string.
+      - name: Record the published build for the dashboard
+        if: steps.gate.outputs.ready == 'true'
+        shell: pwsh
+        run: |
+          $exe = Get-Item dist\projectBV-key.exe
+          $version = (Get-Content web/src/agent-build.json -Raw | ConvertFrom-Json).version
+          [ordered]@{
+            version = $version
+            url     = "https://github.com/${{ github.repository }}/releases/download/agent-key-latest/projectBV-key.exe"
+            sha256  = (Get-FileHash $exe.FullName -Algorithm SHA256).Hash.ToLower()
+            builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
+          } | ConvertTo-Json | Set-Content web/src/agent-build.json -Encoding utf8
+          Get-Content web/src/agent-build.json
+
+      - name: Commit the build record
+        if: steps.gate.outputs.ready == 'true'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add web/src/agent-build.json
+          if git diff --cached --quiet; then
+            echo "build record unchanged"
+            exit 0
+          fi
+          git commit -m "Fleet agent build: record installer url + sha256 [skip ci]"
+          git fetch origin main
+          git rebase origin/main
+          git push origin HEAD:main

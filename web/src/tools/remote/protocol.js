@@ -8,6 +8,7 @@ export const PATHS = {
   agents: () => [...ROOT, 'agents'],
   agent: (id) => [...ROOT, 'agents', id],
   enabled: (id) => [...ROOT, 'enabled', id], // per-device on/off switch
+  enabledAll: () => [...ROOT, 'enabled'], // every switch, readable before an agent exists
   command: (id) => [...ROOT, 'commands', id],
   result: (id) => [...ROOT, 'results', id],
   session: (id) => [...ROOT, 'sessions', id],

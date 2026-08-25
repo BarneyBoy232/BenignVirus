@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import DeployPage from './DeployPage'
+import { listDevices, listManifest, AGENT_NAME } from './api'
 import { TOOLS } from './tools'
 import { trefoilSvg, c } from './ui'
 
@@ -23,11 +24,65 @@ export default function App() {
           {navItem(isTools, 'Tools', () => setView({ kind: 'tools' }))}
         </nav>
       </header>
+      <StrandedDevices />
       <main style={{ maxWidth: isTools ? 1120 : 920, margin: '0 auto', padding: 24 }}>
         {view.kind === 'deploy' && <DeployPage />}
         {view.kind === 'tools' && <ToolsLanding onOpen={(id) => setView({ kind: 'tool', id })} />}
         {view.kind === 'tool' && <ToolView id={view.id} onBack={() => setView({ kind: 'tools' })} />}
       </main>
+    </div>
+  )
+}
+
+// A device with no working agent can never be reached or fixed from here again —
+// someone has to go to it. It is the only outcome that breaks what this product is
+// for, so it is called out above everything, on every screen.
+//
+// It is found two ways, because the obvious way cannot work on its own: a device
+// that reports "the rollback failed" is telling you through the very agent that
+// just died, so the worst case is the one that can never report itself. The second
+// way is what an outsider can actually observe — an agent update was pushed to
+// this device, and it has not been heard from since.
+const QUIET_AFTER_UPDATE_MS = 2 * 60 * 60 * 1000
+
+function StrandedDevices() {
+  const [lost, setLost] = useState([])
+  useEffect(() => {
+    let alive = true
+    const check = async () => {
+      try {
+        const [devices, manifest] = await Promise.all([listDevices(), listManifest()])
+        if (!alive) return
+        const agentEntries = manifest.filter((m) => m.name === AGENT_NAME && m.publishedAt)
+        const pushedTo = (device) => agentEntries
+          .filter((m) => !m.targets || m.targets.length === 0 || m.targets.includes(device.id))
+          .reduce((newest, m) => Math.max(newest, m.publishedAt), 0)
+
+        const now = Date.now()
+        setLost(devices.filter((d) => {
+          if (d.lastUpdateResult === 'rollback-failed') return true
+          const pushed = pushedTo(d)
+          if (!pushed || now - pushed < QUIET_AFTER_UPDATE_MS) return false
+          // Both halves are measured against this browser's clock, never against
+          // each other: a device timestamps its own check-ins, so comparing its
+          // clock to ours would flag a machine with a slow clock for ever.
+          return !d.lastSeen || now - d.lastSeen > QUIET_AFTER_UPDATE_MS
+        }))
+      } catch {
+        /* the banner is not the place to report a Firebase problem */
+      }
+    }
+    check()
+    const t = setInterval(check, 30000)
+    return () => { alive = false; clearInterval(t) }
+  }, [])
+
+  if (lost.length === 0) return null
+  return (
+    <div style={{ background: '#3a1414', borderBottom: '1px solid #ff5c5c', color: '#ffd7d7', padding: '12px 24px', fontSize: 13 }}>
+      <strong>{lost.length === 1 ? '1 device has not checked in since an agent update' : `${lost.length} devices have not checked in since an agent update`}</strong>
+      {' — '}{lost.map((d) => d.name || d.id).join(', ')}
+      {'. '}Switched off would look the same. If they stay silent, they may have no working agent — which cannot be fixed from here, only by running the installer on them.
     </div>
   )
 }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CMD } from './protocol'
 import { runCommand, setEnabled } from './data'
+import { installOnDevice, cancelInstallOnDevice, agentReady, AGENT } from './deploy'
 import { c, ago } from '../../ui'
 import { LivePanel } from './LivePanel'
 
@@ -12,7 +13,7 @@ const TABS = [
   { key: 'perf', label: 'Performance' },
 ]
 
-export function DevicePanel({ device }) {
+export function DevicePanel({ device, queued = null, fleetWide = false, hasFleetEntry = false, onChanged }) {
   const [tab, setTab] = useState('live')
   const [ping, setPing] = useState(null)
   const [pinging, setPinging] = useState(false)
@@ -33,11 +34,18 @@ export function DevicePanel({ device }) {
     try { await runCommand(device.id, CMD.REBOOT, {}, 10000); setPing({ ok: true, text: 'reboot command sent' }) }
     catch (e) { setPing({ ok: false, text: e.message }) }
   }
+  // Enabling is just a switch in Firebase, so it works whatever the agent is doing —
+  // before it is installed, while it is offline, any time. The agent reads the switch
+  // the moment it comes up.
   async function toggleEnabled(on) {
     setMenuOpen(false)
     setEnabledOverride(on) // reflect immediately
     try { await setEnabled(device.id, on) } catch (e) { setEnabledOverride(null); setPing({ ok: false, text: e.message }) }
   }
+
+  const status = !device.hasAgent
+    ? (queued ? 'install queued — the device picks it up at its next check-in' : 'Remote not installed on this device')
+    : device.agentOnline ? `agent online · ${isEnabled ? 'enabled' : 'switched off'}` : `agent offline · last seen ${ago(device.agentLastSeen)}`
 
   return (
     <>
@@ -47,22 +55,22 @@ export function DevicePanel({ device }) {
             <h2 style={c.h2}>{device.name}</h2>
             <p style={{ ...c.sub, margin: '4px 0 0' }}>
               <span style={c.dot(device.agentOnline)} />
-              {device.hasAgent ? (device.agentOnline ? `agent online · ${isEnabled ? 'enabled' : 'switched off'}` : `agent offline · last seen ${ago(device.agentLastSeen)}`) : 'no Remote agent installed'}
+              {status}
               {device.fleetOnline ? '  ·  device powered on' : ''}
             </p>
           </div>
           <div style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
             {ping && <span style={{ fontSize: 12, color: ping.ok ? 'var(--ok)' : '#ff5c5c', overflowWrap: 'anywhere' }}>{ping.ok ? '✓ ' : '✕ '}{ping.text}</span>}
+            {/* Always available: a device can be switched on before its agent arrives. */}
+            <button
+              style={{ ...(isEnabled ? c.ghost : c.primary), padding: '9px 16px', minWidth: 138, fontWeight: 650 }}
+              onClick={() => toggleEnabled(!isEnabled)}>
+              {isEnabled ? 'Disable control' : 'Enable control'}
+            </button>
             <button style={{ ...c.ghost, opacity: device.agentOnline && !pinging ? 1 : 0.5 }} disabled={!device.agentOnline || pinging} onClick={doPing}>{pinging ? 'Pinging…' : 'Ping'}</button>
             <button style={{ ...c.ghost, padding: '8px 12px' }} onClick={() => setMenuOpen((v) => !v)} aria-label="More actions">⋯</button>
             {menuOpen && (
               <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 6, background: 'var(--panel)', border: '1px solid var(--line)', borderRadius: 8, padding: 6, zIndex: 10, minWidth: 170, boxShadow: '0 8px 24px rgba(0,0,0,0.4)' }}>
-                {device.hasAgent && isEnabled && (
-                  <button onClick={() => toggleEnabled(false)}
-                    style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, color: 'var(--text)', padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13 }}>
-                    Disable control
-                  </button>
-                )}
                 <button onClick={() => { setMenuOpen(false); reboot() }} disabled={!device.agentOnline || !isEnabled}
                   style={{ display: 'block', width: '100%', textAlign: 'left', background: 'none', border: 0, color: '#ff5c5c', padding: '8px 10px', borderRadius: 6, cursor: 'pointer', fontSize: 13, opacity: device.agentOnline && isEnabled ? 1 : 0.5 }}>
                   Reboot device
@@ -71,15 +79,19 @@ export function DevicePanel({ device }) {
             )}
           </div>
         </div>
+        {isEnabled && !device.agentOnline && (
+          <p style={{ ...c.sub, margin: '10px 0 0', fontSize: 12 }}>Switched on. It takes effect the moment this device's agent checks in.</p>
+        )}
       </section>
 
-      {!device.agentOnline ? (
+      {!device.hasAgent ? (
+        <InstallOnDevice device={device} queued={queued} fleetWide={fleetWide} hasFleetEntry={hasFleetEntry} onChanged={onChanged} />
+      ) : !device.agentOnline ? (
         <div style={c.empty}>The agent on this device is offline — actions are unavailable until it checks back in.</div>
       ) : !isEnabled ? (
         <section style={c.panel}>
           <h2 style={c.h2}>Remote is switched off on this device</h2>
-          <p style={c.sub}>The agent is installed and running here, but dormant — nothing is captured or controllable, and the person using the device sees nothing. Enable it to take control.</p>
-          <button style={c.primary} onClick={() => toggleEnabled(true)}>Enable control</button>
+          <p style={c.sub}>The agent is installed and running here, but dormant — nothing is captured or controllable, and the person using the device sees nothing. Use <strong>Enable control</strong> above to take control.</p>
         </section>
       ) : (
         <>
@@ -100,6 +112,60 @@ export function DevicePanel({ device }) {
         </>
       )}
     </>
+  )
+}
+
+// Installing Remote on ONE device. Same mechanism as the fleet-wide install, just
+// addressed to this device: the entry names it as its only target, so no other
+// device touches it. The install itself needs no admin rights and shows the person
+// using the device nothing at all.
+function InstallOnDevice({ device, queued, fleetWide, hasFleetEntry, onChanged }) {
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState(null)
+  const ready = agentReady()
+
+  async function install() {
+    setBusy(true); setErr(null)
+    try { await installOnDevice(device.id); if (onChanged) onChanged() } catch (e) { setErr(e.message) }
+    setBusy(false)
+  }
+  async function cancel() {
+    setBusy(true); setErr(null)
+    try { await cancelInstallOnDevice(device.id) } catch (e) { setErr(e.message) }
+    setBusy(false)
+  }
+
+  return (
+    <section style={c.panel}>
+      <h2 style={c.h2}>Remote isn't installed on {device.name} yet</h2>
+      {queued ? (
+        <>
+          <p style={c.sub}>
+            {fleetWide
+              ? `v${queued.version} is queued for the whole fleet, this device included. It installs silently at its next check-in — up to 30 minutes — and appears here as soon as it does.`
+              : `v${queued.version} is queued for this device. It installs silently at its next check-in — up to 30 minutes — and appears here as soon as it does.`}
+            {agentReady() && queued.version !== AGENT.version && ` A newer build (v${AGENT.version}) is available — send it again to push that instead.`}
+          </p>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button style={{ ...c.primary, opacity: busy || !ready ? 0.5 : 1 }} disabled={busy || !ready} onClick={install}>Send it again</button>
+            {!fleetWide && <button style={c.ghost} disabled={busy} onClick={cancel}>Cancel this install</button>}
+            {!fleetWide && hasFleetEntry && <span style={{ fontSize: 12, color: 'var(--dim)' }}>the fleet-wide install still covers this device</span>}
+          </div>
+        </>
+      ) : (
+        <>
+          <p style={c.sub}>Install it on this device alone — no admin rights, no prompt, nothing on their screen. It stays dormant until you enable control above.</p>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <button style={{ ...c.primary, opacity: busy || !ready ? 0.5 : 1 }} disabled={busy || !ready} onClick={install}>
+              {busy ? 'Sending…' : `Install Remote on ${device.name}`}
+            </button>
+            {!ready && <span style={{ fontSize: 12, color: 'var(--dim)' }}>No installer published yet — run the "Build Remote agent installer" action first.</span>}
+          </div>
+        </>
+      )}
+      {err && <div style={{ color: '#ff5c5c', fontSize: 13, marginTop: 10 }}>{err}</div>}
+      {!device.fleetOnline && <p style={{ ...c.sub, margin: '12px 0 0', fontSize: 12 }}>This device is powered off or off the network right now — it will pick the install up when it is next on.</p>}
+    </section>
   )
 }
 

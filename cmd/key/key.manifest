@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<!--
+  Application manifest for the USB "key" installer.
+
+  requestedExecutionLevel=asInvoker is the whole point of this file. Without an
+  embedded manifest Windows applies its "installer detection" heuristic to any
+  unsigned exe that looks like a setup program, and auto-elevates it — which on a
+  standard account means an admin-password prompt before main() ever runs, no
+  matter what the code decides. asInvoker switches that heuristic off: the key
+  starts with the rights of whoever ran it, sees for itself whether that account
+  is an administrator, and asks for elevation ONLY in the split-token-admin case
+  (see cmd/key/main.go). A standard user is never prompted.
+-->
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <assemblyIdentity type="win32" name="projectBV.key" version="1.0.0.0" processorArchitecture="amd64"/>
+  <description>projectBV installer</description>
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="asInvoker" uiAccess="false"/>
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+  <compatibility xmlns="urn:schemas-microsoft-com:compatibility.v1">
+    <application>
+      <!-- Windows 10/11 -->
+      <supportedOS Id="{8e0f7a12-bfb3-4fe8-b9a5-48fd50a15a9a}"/>
+    </application>
+  </compatibility>
+</assembly>

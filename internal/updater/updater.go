@@ -18,8 +18,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
-	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -53,6 +54,25 @@ type App struct {
 	// (the machine's sanitised hostname, same as the fleet/devices key). Empty or
 	// omitted = install on EVERY device (the original fleet-wide behaviour).
 	Targets []string `json:"targets,omitempty"`
+	// Launch is the installed app's own executable (type=app only), started in the
+	// signed-in user's session after installing and kept up on later checks.
+	// %LOCALAPPDATA%, %APPDATA% and %USERPROFILE% are expanded against THAT user.
+	// Empty = install only; the agent never starts anything.
+	Launch string `json:"launch,omitempty"`
+	// Scope decides who runs the installer. "user" runs it as the signed-in person,
+	// with their rights and inside their session — the only way a per-user app ends
+	// up in the right profile, and the only way it installs on a standard account
+	// without an admin prompt. Anything else (including empty) runs it as the agent
+	// itself, which is how every entry behaved before scopes existed.
+	Scope string `json:"scope,omitempty"`
+}
+
+// selfUpdate reports whether this entry is the projectBV agent updating itself.
+// That case is special all the way through: the installer stops this very service
+// to replace its binary, so the agent must not wait for it and must not be the one
+// to record the result.
+func selfUpdate(app App) bool {
+	return strings.EqualFold(app.Name, config.ServiceName)
 }
 
 // Manifest is the set of apps read from the Firestore manifest collection.
@@ -88,11 +108,16 @@ func Run(ctx context.Context, fs *firestore.Client, httpClient *http.Client, cfg
 // checkOnce fetches the manifest from Firebase and applies it. Errors are
 // logged, never fatal — the loop keeps going and retries next tick.
 func checkOnce(ctx context.Context, fs *firestore.Client, httpClient *http.Client, deviceID string, logger *log.Logger) {
+	pruneStaging(logger)
 	m, err := fetchManifest(ctx, fs)
 	if err != nil {
 		logger.Printf("updater: fetch manifest failed: %v", err)
 		return
 	}
+	// Leave proof that this build can reach the fleet. An installer that has just
+	// swapped this binary in waits for exactly this before it stops being able to
+	// undo the swap — it decides, not us.
+	markFleetReached(logger)
 	applyManifest(ctx, httpClient, m, deviceID, logger)
 }
 
@@ -102,17 +127,42 @@ func applyManifest(ctx context.Context, httpClient *http.Client, m Manifest, dev
 	st := loadState(logger)
 	for _, app := range m.Apps {
 		if app.Name == "" || app.URL == "" {
-			logger.Printf("updater: skipping malformed manifest entry %+v", app)
-			continue
+			logger.Printf("updater: ignoring manifest entry with no name or no url: %+v", app)
 		}
-		// Per-device targeting: if the entry names target devices, only install on
-		// those. An empty/omitted list keeps the original fleet-wide behaviour.
-		if len(app.Targets) > 0 && !containsStr(app.Targets, deviceID) {
-			continue
-		}
+	}
+	for _, app := range entriesFor(m, deviceID) {
 		installed, known := st[app.Name]
+		if selfUpdate(app) {
+			// Any DIFFERENT version is applied, not just a newer one: if a build turns
+			// out bad, publishing the previous number is the only way back that
+			// doesn't need someone standing at the machine. Bounded to one attempt per
+			// version per run so a failed update can't download in a loop.
+			if !known || installed != app.Version {
+				if !claimSelfUpdate(app) {
+					continue
+				}
+				logger.Printf("updater: updating the agent %s -> %s", orNone(installed), app.Version)
+				if err := installApp(ctx, httpClient, app, logger); err != nil {
+					logger.Printf("updater: agent update failed: %v", err)
+				} else {
+					logger.Printf("updater: handed the agent update to the installer — this service is about to restart")
+				}
+			}
+			continue
+		}
 		if known && compareVersions(app.Version, installed) <= 0 {
-			continue // already up to date
+			// Up to date on this machine — but a per-user install only exists in the
+			// profile it was installed into, so check the signed-in user has it too.
+			if installedForUser(app) {
+				ensureRunning(app, logger)
+				continue
+			}
+			// Bounded to one attempt per user per version, so a wrong launch path
+			// can't turn into a download every 30 minutes forever.
+			if !claimUserInstall(app) {
+				continue
+			}
+			logger.Printf("updater: %q is recorded as installed but missing for the signed-in user — installing it for them", app.Name)
 		}
 		action := "installing"
 		if known {
@@ -140,6 +190,54 @@ func applyManifest(ctx context.Context, httpClient *http.Client, m Manifest, dev
 	}
 }
 
+// entriesFor picks the manifest entries this device should act on — at most ONE
+// per app name.
+//
+// The same app can be listed twice: once for the whole fleet and once aimed at
+// particular devices (that is how "try this build on one machine first" works).
+// A device named by a targeted entry follows that one and ignores the fleet-wide
+// one, otherwise the two versions would take turns installing over each other for
+// ever.
+func entriesFor(m Manifest, deviceID string) []App {
+	chosen := map[string]App{}
+	var order []string
+	for _, app := range m.Apps {
+		if app.Name == "" || app.URL == "" {
+			continue
+		}
+		targeted := len(app.Targets) > 0
+		if targeted && !containsStr(app.Targets, deviceID) {
+			continue // aimed at other devices
+		}
+		// Names are matched without regard to case, the same way the agent decides
+		// whether an entry is itself. Otherwise "projectBV" and "projectbv" would
+		// both survive as separate apps and reinstall over each other for ever.
+		key := strings.ToLower(app.Name)
+		prev, seen := chosen[key]
+		if !seen {
+			chosen[key] = app
+			order = append(order, key)
+			continue
+		}
+		// A targeted entry beats a fleet-wide one for the same app. Between two
+		// entries of equal standing, the higher version wins — otherwise the winner
+		// would depend on the order Firestore happened to return them in, and the
+		// device could flip between versions from one check to the next.
+		prevTargeted := len(prev.Targets) > 0
+		switch {
+		case targeted && !prevTargeted:
+			chosen[key] = app
+		case targeted == prevTargeted && compareVersions(app.Version, prev.Version) > 0:
+			chosen[key] = app
+		}
+	}
+	out := make([]App, 0, len(order))
+	for _, key := range order {
+		out = append(out, chosen[key])
+	}
+	return out
+}
+
 // fetchManifest reads the manifest collection from Firestore and maps each
 // document to an App.
 func fetchManifest(ctx context.Context, fs *firestore.Client) (Manifest, error) {
@@ -156,6 +254,8 @@ func fetchManifest(ctx context.Context, fs *firestore.Client) (Manifest, error) 
 			SHA256:  asString(d["sha256"]),
 			Type:    asString(d["type"]),
 			Dest:    asString(d["dest"]),
+			Launch:  asString(d["launch"]),
+			Scope:   asString(d["scope"]),
 		}
 		if sa, ok := d["silentArgs"].([]string); ok {
 			app.SilentArgs = sa
@@ -168,9 +268,31 @@ func fetchManifest(ctx context.Context, fs *firestore.Client) (Manifest, error) 
 	return m, nil
 }
 
+// installerExt is the installer's file extension, taken from the URL's PATH.
+// Firebase Storage download links carry a query string ("...Setup.exe?alt=media
+// &token=..."), so reading the extension off the whole URL sees ".exe?alt=media..."
+// and rejects a perfectly good installer without ever downloading it.
+func installerExt(raw string) string {
+	p := raw
+	if u, err := url.Parse(raw); err == nil && u.Path != "" {
+		p = u.Path
+		if dec, err := url.PathUnescape(p); err == nil {
+			p = dec
+		}
+	}
+	return strings.ToLower(path.Ext(p))
+}
+
 func asString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+func orNone(v string) string {
+	if v == "" {
+		return "(none)"
+	}
+	return v
 }
 
 func containsStr(list []string, want string) bool {
@@ -205,7 +327,14 @@ func downloadVerified(ctx context.Context, client *http.Client, app App, ext str
 		return "", fmt.Errorf("download HTTP %d", resp.StatusCode)
 	}
 
-	tmp, err := os.CreateTemp("", "projectbv-*"+ext)
+	// Stage downloads under ProgramData, not the system temp folder. Running as a
+	// service, os.TempDir() is C:\Windows\Temp — which a standard user cannot read,
+	// so the installer we hand to their session would fail to even start.
+	staging := filepath.Join(config.DataDir(), "downloads")
+	if err := os.MkdirAll(staging, 0755); err != nil {
+		return "", err
+	}
+	tmp, err := os.CreateTemp(staging, "projectbv-*"+installerExt(ext))
 	if err != nil {
 		return "", err
 	}
@@ -229,7 +358,7 @@ func downloadVerified(ctx context.Context, client *http.Client, app App, ext str
 
 // installApp downloads, verifies, and silently installs one app installer.
 func installApp(ctx context.Context, client *http.Client, app App, logger *log.Logger) error {
-	ext := strings.ToLower(filepath.Ext(app.URL))
+	ext := installerExt(app.URL)
 	if ext != ".msi" && ext != ".exe" {
 		return fmt.Errorf("unsupported installer type %q (only .msi/.exe)", ext)
 	}
@@ -237,16 +366,22 @@ func installApp(ctx context.Context, client *http.Client, app App, logger *log.L
 	if err != nil {
 		return err
 	}
-	defer os.Remove(tmpPath)
+	// An agent update keeps running after this function returns, straight from
+	// tmpPath, so it cleans up on a later pass instead (see pruneStaging).
+	if !selfUpdate(app) {
+		defer os.Remove(tmpPath)
+	}
 
 	// Install silently. Args are passed as separate argv elements (never a shell
-	// string), so nothing in the manifest can be interpreted as a command.
+	// string), so nothing in the manifest can be interpreted as a command. The
+	// installer runs in the signed-in user's session with that user's rights —
+	// a standard account installs without any UAC prompt at all.
 	name, args := silentCommand(ext, tmpPath, app.SilentArgs)
-	cmd := exec.CommandContext(ctx, name, args...)
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return fmt.Errorf("installer exited with error: %v (%s)", err, strings.TrimSpace(string(out)))
+	if err := runInstaller(ctx, app, name, args, logger); err != nil {
+		return err
 	}
+	// A freshly installed app is no use to anyone until it is actually running.
+	ensureRunning(app, logger)
 	return nil
 }
 

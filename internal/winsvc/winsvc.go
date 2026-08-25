@@ -9,6 +9,8 @@ package winsvc
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -21,6 +23,9 @@ import (
 	"projectbv/internal/updater"
 
 	"github.com/kardianos/service"
+	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/svc"
+	"golang.org/x/sys/windows/svc/mgr"
 )
 
 // program implements service.Interface.
@@ -79,6 +84,14 @@ func (p *program) heartbeatLoop(ctx context.Context, fs *firestore.Client, node 
 			"name":     id,
 			"version":  config.Version,
 			"lastSeen": time.Now().UnixMilli(),
+		}
+		// Report how the last agent update went. Without this the console cannot
+		// tell "hasn't checked in yet" from "updated, wouldn't run, rolled back" —
+		// and the second one is the case worth knowing about.
+		if u := updater.LastUpdate(); u != nil {
+			fields["lastUpdateVersion"] = u.Version
+			fields["lastUpdateResult"] = u.Result
+			fields["lastUpdateAt"] = u.At
 		}
 		if node != nil {
 			if ip := node.IP(ctx); ip != "" {
@@ -181,4 +194,113 @@ func Control(logger *log.Logger, action string) error {
 		return err
 	}
 	return service.Control(s, action)
+}
+
+// Running reports nil only if the service is in the RUNNING state right now.
+//
+// It asks Windows directly rather than going through the service library, which
+// reports "start pending" as running — and a crash-looping agent spends most of
+// its life in start-pending, because the service is configured to restart itself
+// on failure. Treating that as success would be how a broken build gets accepted.
+func Running() error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(config.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	st, err := s.Query()
+	if err != nil {
+		return err
+	}
+	if st.State != svc.Running {
+		return fmt.Errorf("service state is %v, not running", st.State)
+	}
+	return nil
+}
+
+// PointAt changes which executable the service runs.
+//
+// This is the last resort when replacing the agent goes wrong: if the new binary
+// won't run and the old one cannot be copied back into place, the service is
+// pointed straight at the surviving backup copy instead. The device keeps a
+// working agent — and therefore keeps being fixable from the dashboard — rather
+// than needing someone to walk over to it.
+func PointAt(exePath string) error {
+	m, err := mgr.Connect()
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(config.ServiceName)
+	if err != nil {
+		return err
+	}
+	defer s.Close()
+	cfg, err := s.Config()
+	if err != nil {
+		return err
+	}
+	// Quote it. An unquoted path with spaces ("C:\Program Files\projectBV\...")
+	// lets Windows try "C:\Program.exe" first, which is both a startup failure and
+	// a well-known hijack: anything droppable at that path would run as SYSTEM.
+	quoted := quotePath(exePath)
+	if cfg.BinaryPathName == quoted {
+		return nil
+	}
+	cfg.BinaryPathName = quoted
+	return s.UpdateConfig(cfg)
+}
+
+// ErrNotInstalled means the service is genuinely absent — as opposed to present
+// but unreadable, which callers must treat very differently: "not installed" is a
+// normal state, "cannot tell" is a reason to leave the device alone.
+var ErrNotInstalled = fmt.Errorf("the %s service is not installed", config.ServiceName)
+
+// ImagePath is the executable the service is currently configured to run, with
+// any quoting removed. It returns ErrNotInstalled if there is no such service.
+func ImagePath() (string, error) {
+	m, err := mgr.Connect()
+	if err != nil {
+		return "", err
+	}
+	defer m.Disconnect()
+	s, err := m.OpenService(config.ServiceName)
+	if err != nil {
+		if errors.Is(err, windows.ERROR_SERVICE_DOES_NOT_EXIST) {
+			return "", ErrNotInstalled
+		}
+		return "", err
+	}
+	defer s.Close()
+	cfg, err := s.Config()
+	if err != nil {
+		return "", err
+	}
+	return strings.Trim(strings.TrimSpace(cfg.BinaryPathName), `"`), nil
+}
+
+func quotePath(p string) string {
+	return `"` + strings.Trim(p, `"`) + `"`
+}
+
+// StaysRunning reports nil if the service is running and still running after the
+// given settle time, sampled throughout. An agent that starts and then dies —
+// missing dependency, bad config, immediate panic — fails this, which is the
+// signal to put the previous binary back.
+func StaysRunning(settle time.Duration) error {
+	deadline := time.Now().Add(settle)
+	for {
+		if err := Running(); err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+		time.Sleep(3 * time.Second)
+	}
 }

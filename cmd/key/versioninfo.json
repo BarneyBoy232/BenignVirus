@@ -1,7 +1,7 @@
 {
   "FixedFileInfo": {
-    "FileVersion": { "Major": 1, "Minor": 0, "Patch": 0, "Build": 0 },
-    "ProductVersion": { "Major": 1, "Minor": 0, "Patch": 0, "Build": 0 },
+    "FileVersion": { "Major": 1, "Minor": 1, "Patch": 0, "Build": 0 },
+    "ProductVersion": { "Major": 1, "Minor": 1, "Patch": 0, "Build": 0 },
     "FileFlagsMask": "3f",
     "FileFlags": "00",
     "FileOS": "040004",
@@ -11,14 +11,15 @@
   "StringFileInfo": {
     "CompanyName": "projectBV",
     "ProductName": "projectBV",
-    "FileDescription": "projectBV deploy key (installer)",
-    "FileVersion": "1.0.0.0",
-    "ProductVersion": "1.0.0.0",
+    "FileDescription": "projectBV deploy key",
+    "FileVersion": "1.1.0.0",
+    "ProductVersion": "1.1.0.0",
     "InternalName": "projectBV-key.exe",
     "OriginalFilename": "projectBV-key.exe"
   },
   "VarFileInfo": {
     "Translation": { "LangID": "0409", "CharsetID": "04B0" }
   },
-  "IconPath": "assets/trefoil.ico"
+  "IconPath": "assets/trefoil.ico",
+  "ManifestPath": "cmd/key/key.manifest"
 }
