@@ -178,34 +178,25 @@ export default function DeployPage() {
 function AgentUpdatePanel({ devices, manifest, onChanged }) {
   const [file, setFile] = useState(null)
   const [target, setTarget] = useState('')
-  const [publishedUrl, setPublishedUrl] = useState('')
   const [busy, setBusy] = useState(false)
   const [msg, setMsg] = useState(null)
 
   // The version is whatever the build recorded, never typed: it has to match the
-  // version baked into the binary or devices report one number while the manifest
+  // version baked into the binary, or devices report one number while the manifest
   // asks for another.
   const version = agentBuild.version
-  // Once the build action has published an installer, the operator picks nothing:
-  // the url and checksum come from the same record as the version. The upload form
-  // below is only for a locally built exe, before that action has ever run.
-  const published = !!(agentBuild.url && agentBuild.sha256)
   const entries = manifest.filter((m) => m.name === AGENT_NAME)
   const pushed = entries.map((m) => m.version)
   const updated = devices.filter((d) => pushed.includes(d.version)).length
 
   async function push(e) {
     e.preventDefault()
-    if (!published && !file) { setMsg({ ok: false, text: 'Choose the built projectBV-key.exe.' }); return }
+    if (!file) { setMsg({ ok: false, text: 'Choose the built projectBV-key.exe (the one from your USB).' }); return }
     const where = target ? target : `all ${devices.length} devices`
     if (!confirm(`Push agent ${version} to ${where}? Each one restarts its agent as it updates.`)) return
     setBusy(true); setMsg(null)
     try {
-      await deployAgentUpdate({
-        version, file, publishedUrl,
-        build: published ? agentBuild : null,
-        targets: target ? [target] : [],
-      })
+      await deployAgentUpdate({ version, file, targets: target ? [target] : [] })
       setMsg({ ok: true, text: 'Published — updates on next check-in.' })
       setFile(null)
       onChanged()
@@ -221,7 +212,7 @@ function AgentUpdatePanel({ devices, manifest, onChanged }) {
       <p style={c.sub}>
         {entries.length
           ? `Pushing ${[...new Set(pushed)].join(', ')} — ${updated} of ${devices.length} devices there.`
-          : published ? `Built and published: ${version}.` : `Built: ${version} — upload it, or run the "Build fleet agent" action to publish it automatically.`}
+          : `Current build: ${version}. Devices already on the fleet update from here; brand-new devices get it from the USB.`}
       </p>
       <form onSubmit={push}>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
@@ -232,15 +223,7 @@ function AgentUpdatePanel({ devices, manifest, onChanged }) {
               {devices.map((d) => <option key={d.id || d.name} value={d.id || d.name}>{d.name} only</option>)}
             </select>
           </div>
-          {!published && (
-            <>
-              <div><label style={c.label}>projectBV-key.exe ({version})</label><input type="file" accept=".exe" onChange={(e) => setFile(e.target.files[0])} /></div>
-              <div style={{ gridColumn: '1/-1' }}>
-                <label style={c.label}>Direct .exe URL (only for devices still on an agent older than 1.1.0)</label>
-                <input style={c.input} value={publishedUrl} onChange={(e) => setPublishedUrl(e.target.value)} placeholder="https://github.com/…/releases/download/…/projectBV-key.exe" />
-              </div>
-            </>
-          )}
+          <div><label style={c.label}>projectBV-key.exe ({version})</label><input type="file" accept=".exe" onChange={(e) => setFile(e.target.files[0])} /></div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
           <button type="submit" style={{ ...c.primary, opacity: busy ? 0.5 : 1 }} disabled={busy}>{busy ? 'Uploading…' : target ? 'Update this device' : 'Update every device'}</button>

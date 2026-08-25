@@ -64,24 +64,10 @@ standard accounts. Regenerate the resource file and build again:
 # binary reports. A hand-typed version that doesn't match the binary leaves the
 # fleet page saying "0 of N devices updated" for ever.
 $version = (Select-String -Path 'internal\config\config.go' -Pattern 'const Version = "([^"]+)"').Matches[0].Groups[1].Value
-# url/sha256 stay empty here: a local build isn't published anywhere the devices
-# can download from. The build-key workflow fills those in when it publishes one,
-# and the dashboard then needs no file picked at all.
-$record = [ordered]@{
+[ordered]@{
     version = $version
-    url     = ''
-    sha256  = ''
     builtAt = (Get-Date).ToUniversalTime().ToString('yyyy-MM-ddTHH:mm:ssZ')
-}
-if (Test-Path web/src/agent-build.json) {
-    $old = Get-Content web/src/agent-build.json -Raw | ConvertFrom-Json
-    if ($old.version -eq $version) {
-        # Same version rebuilt locally: keep whatever the action published for it.
-        $record.url = $old.url
-        $record.sha256 = $old.sha256
-    }
-}
-$record | ConvertTo-Json | Set-Content web/src/agent-build.json -Encoding utf8
+} | ConvertTo-Json | Set-Content web/src/agent-build.json -Encoding utf8
 Write-Host "agent version $version recorded for the dashboard"
 
 Write-Host ''

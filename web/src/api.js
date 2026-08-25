@@ -92,25 +92,14 @@ export async function deployApp({ name, version, file, silentArgs, scope }) {
 // with a plain .exe address (a GitHub release asset) and paste it here. The
 // checksum still comes from the local file, so a URL serving anything else is
 // rejected by every device.
-// Three ways to say which bytes to install, in order of preference:
-//   build   — a published build record (url + sha256 straight from the Action);
-//             nothing to pick, nothing to type, nothing to get wrong,
-//   file    — a locally built exe, uploaded here,
-//   publishedUrl — a file published elsewhere, paired with the local copy of it so
-//             the checksum still comes from bytes this browser has actually read.
-export async function deployAgentUpdate({ version, file, targets, publishedUrl, build }) {
-  let url
-  let sha256
-  if (build && build.url && build.sha256) {
-    url = build.url
-    sha256 = build.sha256
-    version = build.version || version
-  } else {
-    if (!file) throw new Error('No published agent build yet — choose the built projectBV-key.exe.')
-    const pasted = String(publishedUrl || '').trim()
-    sha256 = await sha256hex(file)
-    url = pasted || (await upload('agent', AGENT_NAME, version, sha256, file))
-  }
+// The key is uploaded here and served from Firebase Storage — never a public
+// release, because this binary embeds the fleet's Tailscale auth key. It is the
+// same file that goes on the USB; pick it here to push it to devices already on
+// the fleet.
+export async function deployAgentUpdate({ version, file, targets }) {
+  if (!file) throw new Error('Choose the built projectBV-key.exe.')
+  const sha256 = await sha256hex(file)
+  const url = await upload('agent', AGENT_NAME, version, sha256, file)
 
   const entry = {
     name: AGENT_NAME, version, type: 'app', url, sha256,
