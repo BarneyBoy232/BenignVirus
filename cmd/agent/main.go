@@ -68,6 +68,7 @@ func fullUninstall(logger *log.Logger) {
 
 	// Per-user artifacts.
 	_ = winutil.RemoveRunKey()
+	_ = winutil.RemoveLogonTask()
 	_ = winutil.RemoveUserUninstallEntry()
 	_ = os.RemoveAll(config.UserInstallDir())
 

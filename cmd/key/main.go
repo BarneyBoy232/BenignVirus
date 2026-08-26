@@ -447,8 +447,13 @@ func perUserInstall(logger *log.Logger, version string) {
 		}
 		os.Exit(1)
 	}
-	if err := winutil.SetRunKey(dst); err != nil {
-		logger.Printf("install: run-key failed: %v", err)
+	// A self-healing logon task, not a bare Run key: it restarts the agent within
+	// minutes if it is ever closed or crashes, so a machine that is on and in use
+	// can't sit there offline. The old Run key (from a 1.0.0 install) is removed so
+	// the two never both launch the agent.
+	_ = winutil.RemoveRunKey()
+	if err := winutil.InstallLogonTask(dst); err != nil {
+		logger.Printf("install: could not set up autostart: %v", err)
 		if update {
 			restoreUserAgent(logger, dst, backup, version, err)
 		}
@@ -460,13 +465,17 @@ func perUserInstall(logger *log.Logger, version string) {
 
 	// Start it now so the user doesn't have to sign out and back in first.
 	startedAt := time.Now()
-	if err := exec.Command(dst).Start(); err != nil {
-		logger.Printf("install: could not start agent now: %v", err)
-		if update {
-			restoreUserAgent(logger, dst, backup, version, err)
-			os.Exit(1)
+	if err := winutil.StartLogonTask(); err != nil {
+		// Fall back to launching it directly; the task still keeps it alive after.
+		logger.Printf("install: starting via the task failed (%v) — launching directly", err)
+		if err := exec.Command(dst).Start(); err != nil {
+			logger.Printf("install: could not start agent now: %v", err)
+			if update {
+				restoreUserAgent(logger, dst, backup, version, err)
+				os.Exit(1)
+			}
+			return // first install: it starts at next login
 		}
-		return // first install: it starts at next login
 	}
 
 	if !update {
