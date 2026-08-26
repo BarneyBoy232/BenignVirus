@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"projectbv/internal/config"
@@ -34,6 +35,24 @@ type program struct {
 	logger *log.Logger
 	cancel context.CancelFunc
 	done   chan struct{}
+
+	// The tunnel node, once it is up. The heartbeat reads it every tick to include
+	// the tailnet IP; it is nil until (and unless) Tailscale comes up, which never
+	// holds the heartbeat back.
+	nodeMu sync.Mutex
+	node   *tailscale.Node
+}
+
+func (p *program) setNode(n *tailscale.Node) {
+	p.nodeMu.Lock()
+	p.node = n
+	p.nodeMu.Unlock()
+}
+
+func (p *program) getNode() *tailscale.Node {
+	p.nodeMu.Lock()
+	defer p.nodeMu.Unlock()
+	return p.node
 }
 
 // Start is called by the service manager. It must return promptly, so the real
@@ -56,18 +75,28 @@ func (p *program) Start(s service.Service) error {
 func (p *program) run(ctx context.Context) {
 	defer close(p.done)
 
-	var node *tailscale.Node
-	if n, err := tailscale.Up(ctx, p.cfg, p.logger); err != nil {
-		p.logger.Printf("service: tailscale (tunnel) not up: %v — deploys continue over the internet", err)
-	} else {
-		node = n
-		defer node.Close()
-	}
-
 	fs := firestore.New(p.cfg.FirebaseProjectID, p.cfg.FirebaseAPIKey, http.DefaultClient)
 
-	// Heartbeat so the dashboard shows this device (with its tunnel address).
-	go p.heartbeatLoop(ctx, fs, node)
+	// Presence FIRST, and never gated on the tunnel. A device that can reach
+	// Firebase must show as online even if Tailscale never comes up — otherwise a
+	// machine whose tunnel state folder isn't writable (the standard-account case)
+	// looks dead while it is perfectly alive.
+	go p.heartbeatLoop(ctx, fs)
+
+	// Bring the tunnel up in the background, best-effort and time-bounded, so a
+	// slow or failing tsnet can delay nothing else. The heartbeat picks up the
+	// tailnet IP once the node is up.
+	go func() {
+		upCtx, cancel := context.WithTimeout(ctx, 90*time.Second)
+		defer cancel()
+		if n, err := tailscale.Up(upCtx, p.cfg, p.logger); err != nil {
+			p.logger.Printf("service: tailscale (tunnel) not up: %v — deploys and presence continue over the internet", err)
+		} else {
+			p.setNode(n)
+			<-ctx.Done()
+			n.Close()
+		}
+	}()
 
 	// Deploy loop (blocks until ctx is cancelled). Pass this device's id so the
 	// updater can honour per-device targeting in the manifest.
@@ -77,7 +106,7 @@ func (p *program) run(ctx context.Context) {
 // heartbeatLoop writes this device's check-in doc to Firebase every minute so it
 // appears in the dashboard's "Connected devices" list, including its tailnet IP
 // (the address other apps use to reach it through the tunnel).
-func (p *program) heartbeatLoop(ctx context.Context, fs *firestore.Client, node *tailscale.Node) {
+func (p *program) heartbeatLoop(ctx context.Context, fs *firestore.Client) {
 	id := deviceID()
 	write := func() {
 		fields := map[string]any{
@@ -93,7 +122,7 @@ func (p *program) heartbeatLoop(ctx context.Context, fs *firestore.Client, node 
 			fields["lastUpdateResult"] = u.Result
 			fields["lastUpdateAt"] = u.At
 		}
-		if node != nil {
+		if node := p.getNode(); node != nil {
 			if ip := node.IP(ctx); ip != "" {
 				fields["tailnetIP"] = ip
 			}

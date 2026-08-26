@@ -63,14 +63,44 @@ func InstallDir() string {
 	return filepath.Join(base, "projectBV")
 }
 
-// DataDir is where runtime state lives (tsnet state, update state, log),
-// e.g. C:\ProgramData\projectBV.
+// DataDir is where runtime state lives (tsnet state, update state, log).
+//
+// It prefers C:\ProgramData\projectBV, the machine-wide spot the service uses.
+// But a standard-account (per-user) agent frequently cannot write there — the
+// folder is often owned by SYSTEM from an admin install — and a data dir it
+// cannot write is why the tunnel silently failed to persist its state and, with
+// it, the whole agent looked dead. So when ProgramData isn't writable, fall back
+// to the user's own LocalAppData, which they can always write. Both the agent and
+// its per-user installer run as the same user, so they resolve to the same place.
 func DataDir() string {
 	base := os.Getenv("ProgramData")
 	if base == "" {
 		base = `C:\ProgramData`
 	}
-	return filepath.Join(base, "projectBV")
+	shared := filepath.Join(base, "projectBV")
+	if dirWritable(shared) {
+		return shared
+	}
+	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+		return filepath.Join(local, "projectBV", "data")
+	}
+	return shared
+}
+
+// dirWritable reports whether dir exists (creating it if it can) and this process
+// can actually write a file into it.
+func dirWritable(dir string) bool {
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".write-test-*")
+	if err != nil {
+		return false
+	}
+	name := f.Name()
+	f.Close()
+	os.Remove(name)
+	return true
 }
 
 // AgentExePath is the installed agent binary's full path (machine-wide install).
