@@ -91,7 +91,7 @@ function InstallBanner({ devices, manifest }) {
         <div>
           <h2 style={c.h2}>Install Remote on your fleet</h2>
           <p style={{ ...c.sub, margin: '4px 0 0' }}>
-            {published ? `Deployed to the fleet (v${fleet.version}) — every device installs it automatically.` : 'One click installs the Remote agent on every fleet device at once — or install one device at a time from its own panel.'}
+            {published ? `Deployed to the fleet (v${fleet.version}).` : 'Install on every device, or one at a time from its panel.'}
             {total > 0 && ` · ${withAgent} of ${total} device${total === 1 ? '' : 's'} have it.`}
           </p>
         </div>
@@ -104,7 +104,7 @@ function InstallBanner({ devices, manifest }) {
         </div>
       </div>
       {msg && <div style={{ marginTop: 10, fontSize: 13, color: msg.ok ? 'var(--ok)' : '#ff5c5c' }}>{msg.text}</div>}
-      <p style={{ ...c.sub, margin: '10px 0 0', fontSize: 12 }}>It installs with no admin rights and no prompt on the device — even for a standard account — and each install stays <strong>dormant</strong> until you enable that device, so you choose which ones are actually controllable. The person using a device sees nothing either way.</p>
+      <p style={{ ...c.sub, margin: '10px 0 0', fontSize: 12 }}>Silent, no admin prompt. Each install stays dormant until you enable that device.</p>
     </section>
   )
 }

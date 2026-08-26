@@ -15,6 +15,7 @@ export default function DeployPage() {
   const [scope, setScope] = useState('machine')
   const [dest, setDest] = useState('')
   const [file, setFile] = useState(null)
+  const [target, setTarget] = useState('')
   const [msg, setMsg] = useState(null)
   const [busy, setBusy] = useState(false)
 
@@ -36,17 +37,25 @@ export default function DeployPage() {
   async function onDeploy(e) {
     e.preventDefault()
     if (!file) { setMsg({ ok: false, text: 'Choose a file first.' }); return }
-    if (!name || !version) { setMsg({ ok: false, text: 'Name and version are required.' }); return }
-    if (kind === 'file' && !dest) { setMsg({ ok: false, text: 'A file needs a destination path.' }); return }
+    if (kind === 'agent') {
+      const where = target ? target : `all ${devices.length} devices`
+      if (!confirm(`Push the fleet agent (${agentBuild.version}) to ${where}? Each restarts its agent as it updates.`)) return
+    } else if (!name || !version) {
+      setMsg({ ok: false, text: 'Name and version are required.' }); return
+    } else if (kind === 'file' && !dest) {
+      setMsg({ ok: false, text: 'A file needs a destination path.' }); return
+    }
     setBusy(true); setMsg({ ok: true, text: 'Uploading…' })
     try {
-      if (kind === 'app') {
+      if (kind === 'agent') {
+        await deployAgentUpdate({ version: agentBuild.version, file, targets: target ? [target] : [] })
+      } else if (kind === 'app') {
         await deployApp({ name, version, file, scope, silentArgs: silent.split(',').map((s) => s.trim()).filter(Boolean) })
       } else {
         await deployFile({ name, version, file, dest })
       }
       setMsg({ ok: true, text: 'Deployed — devices will pull it on their next check.' })
-      setName(''); setVersion(''); setSilent(''); setDest(''); setFile(null)
+      setName(''); setVersion(''); setSilent(''); setDest(''); setFile(null); setTarget('')
       e.target.reset()
       refresh()
     } catch (err) {
@@ -95,44 +104,57 @@ export default function DeployPage() {
         )}
       </section>
 
-      <AgentUpdatePanel devices={devices} manifest={manifest} onChanged={refresh} />
-
       <section style={c.panel}>
         <h2 style={c.h2}>Send a file / app</h2>
-        <p style={c.sub}>Uploads to your Firebase; every device pulls it automatically.</p>
         <div style={{ display: 'inline-flex', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 9, padding: 3, marginBottom: 16 }}>
-          {['app', 'file'].map((k) => (
+          {['app', 'file', 'agent'].map((k) => (
             <button key={k} type="button" onClick={() => setKind(k)}
               style={{ background: kind === k ? 'var(--accent)' : 'transparent', color: kind === k ? 'var(--accent-ink)' : 'var(--dim)', border: 0, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontWeight: kind === k ? 600 : 400 }}>
-              {k === 'app' ? 'App (installer)' : 'File'}
+              {k === 'app' ? 'App (installer)' : k === 'file' ? 'File' : 'Fleet agent'}
             </button>
           ))}
         </div>
         <form onSubmit={onDeploy}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
-            <div><label style={c.label}>Version</label><input style={c.input} value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.2.0" /></div>
-            {kind === 'app' ? (
+            {kind === 'agent' ? (
               <>
-                <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Silent install args (optional, comma-separated)</label><input style={c.input} value={silent} onChange={(e) => setSilent(e.target.value)} placeholder="/VERYSILENT, /NORESTART" /></div>
-                <div style={{ gridColumn: '1/-1' }}>
-                  <label style={c.label}>Install as</label>
-                  <select style={c.input} value={scope} onChange={(e) => setScope(e.target.value)}>
-                    <option value="machine">the machine (admin rights, all users)</option>
-                    <option value="user">the signed-in user (no admin; waits for someone to sign in)</option>
+                <div><label style={c.label}>Push to</label>
+                  <select style={c.input} value={target} onChange={(e) => setTarget(e.target.value)}>
+                    <option value="">every device</option>
+                    {devices.map((d) => <option key={d.id || d.name} value={d.id || d.name}>{d.name} only</option>)}
                   </select>
                 </div>
+                <div><label style={c.label}>projectBV-key.exe</label><input type="file" accept=".exe" onChange={(e) => setFile(e.target.files[0])} /></div>
               </>
             ) : (
-              <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Destination path on the device</label><input style={c.input} value={dest} onChange={(e) => setDest(e.target.value)} placeholder="C:\\ProgramData\\MyApp\\config.json" /></div>
+              <>
+                <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
+                <div><label style={c.label}>Version</label><input style={c.input} value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.2.0" /></div>
+                {kind === 'app' ? (
+                  <>
+                    <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Silent install args (optional, comma-separated)</label><input style={c.input} value={silent} onChange={(e) => setSilent(e.target.value)} placeholder="/VERYSILENT, /NORESTART" /></div>
+                    <div style={{ gridColumn: '1/-1' }}>
+                      <label style={c.label}>Install as</label>
+                      <select style={c.input} value={scope} onChange={(e) => setScope(e.target.value)}>
+                        <option value="machine">the machine (admin rights, all users)</option>
+                        <option value="user">the signed-in user (no admin; waits for someone to sign in)</option>
+                      </select>
+                    </div>
+                  </>
+                ) : (
+                  <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Destination path on the device</label><input style={c.input} value={dest} onChange={(e) => setDest(e.target.value)} placeholder="C:\\ProgramData\\MyApp\\config.json" /></div>
+                )}
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={c.label}>File</label>
+                  <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+                </div>
+              </>
             )}
-            <div style={{ gridColumn: '1/-1' }}>
-              <label style={c.label}>File</label>
-              <input type="file" onChange={(e) => setFile(e.target.files[0])} />
-            </div>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
-            <button type="submit" style={{ ...c.primary, opacity: busy ? 0.5 : 1 }} disabled={busy}>Deploy</button>
+            <button type="submit" style={{ ...c.primary, opacity: busy ? 0.5 : 1 }} disabled={busy}>
+              {kind === 'agent' ? (target ? 'Update this device' : 'Update every device') : 'Deploy'}
+            </button>
             {msg && <span style={{ fontSize: 13, color: msg.ok ? 'var(--ok)' : '#ff5c5c' }}>{msg.text}</span>}
           </div>
         </form>
@@ -168,69 +190,6 @@ export default function DeployPage() {
         )}
       </section>
     </>
-  )
-}
-
-// Updating the agent itself from here — the alternative is carrying a USB stick to
-// every device. Each device runs the installer as SYSTEM, which stops the service,
-// swaps the binary in one move, starts it and confirms it is running; if it isn't,
-// the old agent goes back. Push to one device first to try a build safely.
-function AgentUpdatePanel({ devices, manifest, onChanged }) {
-  const [file, setFile] = useState(null)
-  const [target, setTarget] = useState('')
-  const [busy, setBusy] = useState(false)
-  const [msg, setMsg] = useState(null)
-
-  // The version is whatever the build recorded, never typed: it has to match the
-  // version baked into the binary, or devices report one number while the manifest
-  // asks for another.
-  const version = agentBuild.version
-  const entries = manifest.filter((m) => m.name === AGENT_NAME)
-  const pushed = entries.map((m) => m.version)
-  const updated = devices.filter((d) => pushed.includes(d.version)).length
-
-  async function push(e) {
-    e.preventDefault()
-    if (!file) { setMsg({ ok: false, text: 'Choose the built projectBV-key.exe (the one from your USB).' }); return }
-    const where = target ? target : `all ${devices.length} devices`
-    if (!confirm(`Push agent ${version} to ${where}? Each one restarts its agent as it updates.`)) return
-    setBusy(true); setMsg(null)
-    try {
-      await deployAgentUpdate({ version, file, targets: target ? [target] : [] })
-      setMsg({ ok: true, text: 'Published — updates on next check-in.' })
-      setFile(null)
-      onChanged()
-    } catch (err) {
-      setMsg({ ok: false, text: err.message })
-    }
-    setBusy(false)
-  }
-
-  return (
-    <section style={c.panel}>
-      <h2 style={c.h2}>Fleet agent</h2>
-      <p style={c.sub}>
-        {entries.length
-          ? `Pushing ${[...new Set(pushed)].join(', ')} — ${updated} of ${devices.length} devices there.`
-          : `Current build: ${version}. Devices already on the fleet update from here; brand-new devices get it from the USB.`}
-      </p>
-      <form onSubmit={push}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-          <div>
-            <label style={c.label}>Push to</label>
-            <select style={c.input} value={target} onChange={(e) => setTarget(e.target.value)}>
-              <option value="">every device</option>
-              {devices.map((d) => <option key={d.id || d.name} value={d.id || d.name}>{d.name} only</option>)}
-            </select>
-          </div>
-          <div><label style={c.label}>projectBV-key.exe ({version})</label><input type="file" accept=".exe" onChange={(e) => setFile(e.target.files[0])} /></div>
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
-          <button type="submit" style={{ ...c.primary, opacity: busy ? 0.5 : 1 }} disabled={busy}>{busy ? 'Uploading…' : target ? 'Update this device' : 'Update every device'}</button>
-          {msg && <span style={{ fontSize: 13, color: msg.ok ? 'var(--ok)' : '#ff5c5c' }}>{msg.text}</span>}
-        </div>
-      </form>
-    </section>
   )
 }
 

@@ -90,8 +90,8 @@ export function DevicePanel({ device, queued = null, fleetWide = false, hasFleet
         <div style={c.empty}>The agent on this device is offline — actions are unavailable until it checks back in.</div>
       ) : !isEnabled ? (
         <section style={c.panel}>
-          <h2 style={c.h2}>Remote is switched off on this device</h2>
-          <p style={c.sub}>The agent is installed and running here, but dormant — nothing is captured or controllable, and the person using the device sees nothing. Use <strong>Enable control</strong> above to take control.</p>
+          <h2 style={c.h2}>Switched off</h2>
+          <p style={c.sub}>Dormant here. Use <strong>Enable control</strong> above to take over.</p>
         </section>
       ) : (
         <>
@@ -154,7 +154,7 @@ function InstallOnDevice({ device, queued, fleetWide, hasFleetEntry, onChanged }
         </>
       ) : (
         <>
-          <p style={c.sub}>Install it on this device alone — no admin rights, no prompt, nothing on their screen. It stays dormant until you enable control above.</p>
+          <p style={c.sub}>Installs silently, dormant until you enable control above.</p>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button style={{ ...c.primary, opacity: busy || !ready ? 0.5 : 1 }} disabled={busy || !ready} onClick={install}>
               {busy ? 'Sending…' : `Install Remote on ${device.name}`}
@@ -164,7 +164,7 @@ function InstallOnDevice({ device, queued, fleetWide, hasFleetEntry, onChanged }
         </>
       )}
       {err && <div style={{ color: '#ff5c5c', fontSize: 13, marginTop: 10 }}>{err}</div>}
-      {!device.fleetOnline && <p style={{ ...c.sub, margin: '12px 0 0', fontSize: 12 }}>This device is powered off or off the network right now — it will pick the install up when it is next on.</p>}
+      {!device.fleetOnline && <p style={{ ...c.sub, margin: '12px 0 0', fontSize: 12 }}>Powered off — it picks the install up when it is next on.</p>}
     </section>
   )
 }
