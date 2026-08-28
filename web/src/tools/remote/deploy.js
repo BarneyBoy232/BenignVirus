@@ -31,7 +31,6 @@ const MANIFEST = ['from_projectbv', 'fleet', 'manifest']
 // One doc for the fleet-wide entry, one per device for single-device installs.
 // Every doc carries the same `name`, so a device that installs from one entry is
 // recorded as having the app and won't install it twice from the other.
-const fleetDoc = () => doc(db, ...MANIFEST, AGENT.name)
 const deviceDoc = (deviceId) => doc(db, ...MANIFEST, `${AGENT.name}--${deviceId}`)
 
 export const agentReady = () => !!AGENT.url && !!AGENT.sha256
@@ -54,17 +53,9 @@ function entry(targets) {
   return e
 }
 
-// Publish to every device on the fleet.
-export function publishAgent() {
-  if (!agentReady()) return Promise.reject(new Error('No published installer yet — the build action has not recorded one.'))
-  return setDoc(fleetDoc(), entry())
-}
+// Publish to one device only. There is no fleet-wide install: every install is
+// aimed at a single device, so the two never overlap and confuse each other.
 
-export function unpublishAgent() {
-  return deleteDoc(fleetDoc())
-}
-
-// Publish to one device only.
 export function installOnDevice(deviceId) {
   if (!agentReady()) return Promise.reject(new Error('No published installer yet — the build action has not recorded one.'))
   return setDoc(deviceDoc(deviceId), entry([deviceId]))
@@ -76,21 +67,17 @@ export function cancelInstallOnDevice(deviceId) {
   return deleteDoc(deviceDoc(deviceId))
 }
 
-// Watch every manifest entry for this agent at once. Calls back with
-// { fleet, devices } where fleet is the fleet-wide entry (or null) and devices is
-// a Map of device id -> the single-device entry aimed at it. Keeping the whole
-// entry (not just the id) lets the console show which version is actually on its
-// way, which is not necessarily the newest one built.
+// Watch the per-device install requests for this agent. Calls back with a Map of
+// device id -> the entry aimed at it, so the console can show which version is on
+// its way to each device.
 export function watchAgentManifest(cb) {
   return onSnapshot(collection(db, ...MANIFEST), (snap) => {
-    let fleet = null
     const devices = new Map()
     snap.forEach((d) => {
       const data = d.data()
       if (!data || data.name !== AGENT.name) return
       if (Array.isArray(data.targets) && data.targets.length) data.targets.forEach((t) => devices.set(t, data))
-      else fleet = data
     })
-    cb({ fleet, devices })
+    cb({ devices })
   })
 }

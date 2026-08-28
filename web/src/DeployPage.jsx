@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { listManifest, listDevices, deployApp, deployFile, removeEntry, deployAgentUpdate, AGENT_NAME } from './api'
-import { c } from './ui'
+import { c, ago } from './ui'
 import agentBuild from './agent-build.json'
 
 const ONLINE_MS = 3 * 60 * 1000
@@ -16,6 +16,7 @@ export default function DeployPage() {
   const [dest, setDest] = useState('')
   const [file, setFile] = useState(null)
   const [target, setTarget] = useState('')
+  const [publishedUrl, setPublishedUrl] = useState('')
   const [msg, setMsg] = useState(null)
   const [busy, setBusy] = useState(false)
 
@@ -48,14 +49,14 @@ export default function DeployPage() {
     setBusy(true); setMsg({ ok: true, text: 'Uploading…' })
     try {
       if (kind === 'agent') {
-        await deployAgentUpdate({ version: agentBuild.version, file, targets: target ? [target] : [] })
+        await deployAgentUpdate({ version: agentBuild.version, file, targets: target ? [target] : [], publishedUrl })
       } else if (kind === 'app') {
         await deployApp({ name, version, file, scope, silentArgs: silent.split(',').map((s) => s.trim()).filter(Boolean) })
       } else {
-        await deployFile({ name, version, file, dest })
+        await deployFile({ name, version, file, dest, targets: target ? [target] : [] })
       }
       setMsg({ ok: true, text: 'Deployed — devices will pull it on their next check.' })
-      setName(''); setVersion(''); setSilent(''); setDest(''); setFile(null); setTarget('')
+      setName(''); setVersion(''); setSilent(''); setDest(''); setFile(null); setTarget(''); setPublishedUrl('')
       e.target.reset()
       refresh()
     } catch (err) {
@@ -94,6 +95,7 @@ export default function DeployPage() {
                     <td style={c.td}>
                       <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 8, marginRight: 7, background: online ? 'var(--ok)' : '#5a5f66' }} />
                       {online ? 'online' : 'offline'}
+                      {!online && <span style={{ color: 'var(--dim)' }}> · last seen {ago(d.lastSeen)}</span>}
                       <UpdateOutcome device={d} />
                     </td>
                   </tr>
@@ -107,47 +109,70 @@ export default function DeployPage() {
       <section style={c.panel}>
         <h2 style={c.h2}>Send a file / app</h2>
         <div style={{ display: 'inline-flex', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 9, padding: 3, marginBottom: 16 }}>
-          {['app', 'file', 'agent'].map((k) => (
-            <button key={k} type="button" onClick={() => setKind(k)}
-              style={{ background: kind === k ? 'var(--accent)' : 'transparent', color: kind === k ? 'var(--accent-ink)' : 'var(--dim)', border: 0, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontWeight: kind === k ? 600 : 400 }}>
-              {k === 'app' ? 'App (installer)' : k === 'file' ? 'File' : 'Fleet agent'}
-            </button>
-          ))}
+          {[['app', 'App (installer)'], ['file', 'File']].map(([k, label]) => {
+            // One File tab covers both a plain file and the fleet agent — both are
+            // "send these exact bytes" — so it stays lit for either kind.
+            const on = k === 'app' ? kind === 'app' : kind !== 'app'
+            return (
+              <button key={k} type="button"
+                onClick={() => setKind(k === 'app' ? 'app' : kind === 'agent' ? 'agent' : 'file')}
+                style={{ background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--accent-ink)' : 'var(--dim)', border: 0, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontWeight: on ? 600 : 400 }}>
+                {label}
+              </button>
+            )
+          })}
         </div>
         <form onSubmit={onDeploy}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            {kind === 'agent' ? (
+            {kind === 'app' ? (
               <>
+                <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
+                <div><label style={c.label}>Version</label><input style={c.input} value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.2.0" /></div>
+                <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Silent install args (optional, comma-separated)</label><input style={c.input} value={silent} onChange={(e) => setSilent(e.target.value)} placeholder="/VERYSILENT, /NORESTART" /></div>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={c.label}>Install as</label>
+                  <select style={c.input} value={scope} onChange={(e) => setScope(e.target.value)}>
+                    <option value="machine">the machine (admin rights, all users)</option>
+                    <option value="user">the signed-in user (no admin; waits for someone to sign in)</option>
+                  </select>
+                </div>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={c.label}>File</label>
+                  <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+                </div>
+              </>
+            ) : (
+              <>
+                <div style={{ gridColumn: '1/-1' }}>
+                  <label style={c.label}>Send</label>
+                  <select style={c.input} value={kind} onChange={(e) => setKind(e.target.value)}>
+                    <option value="file">a file to a path</option>
+                    <option value="agent">the fleet agent</option>
+                  </select>
+                </div>
+                {kind === 'file' && (
+                  <>
+                    <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
+                    <div><label style={c.label}>Version</label><input style={c.input} value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.2.0" /></div>
+                    <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Destination path on the device</label><input style={c.input} value={dest} onChange={(e) => setDest(e.target.value)} placeholder="C:\\ProgramData\\MyApp\\config.json" /></div>
+                  </>
+                )}
                 <div><label style={c.label}>Push to</label>
                   <select style={c.input} value={target} onChange={(e) => setTarget(e.target.value)}>
                     <option value="">every device</option>
                     {devices.map((d) => <option key={d.id || d.name} value={d.id || d.name}>{d.name} only</option>)}
                   </select>
                 </div>
-                <div><label style={c.label}>projectBV-key.exe</label><input type="file" accept=".exe" onChange={(e) => setFile(e.target.files[0])} /></div>
-              </>
-            ) : (
-              <>
-                <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
-                <div><label style={c.label}>Version</label><input style={c.input} value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.2.0" /></div>
-                {kind === 'app' ? (
-                  <>
-                    <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Silent install args (optional, comma-separated)</label><input style={c.input} value={silent} onChange={(e) => setSilent(e.target.value)} placeholder="/VERYSILENT, /NORESTART" /></div>
-                    <div style={{ gridColumn: '1/-1' }}>
-                      <label style={c.label}>Install as</label>
-                      <select style={c.input} value={scope} onChange={(e) => setScope(e.target.value)}>
-                        <option value="machine">the machine (admin rights, all users)</option>
-                        <option value="user">the signed-in user (no admin; waits for someone to sign in)</option>
-                      </select>
-                    </div>
-                  </>
-                ) : (
-                  <div style={{ gridColumn: '1/-1' }}><label style={c.label}>Destination path on the device</label><input style={c.input} value={dest} onChange={(e) => setDest(e.target.value)} placeholder="C:\\ProgramData\\MyApp\\config.json" /></div>
-                )}
-                <div style={{ gridColumn: '1/-1' }}>
-                  <label style={c.label}>File</label>
-                  <input type="file" onChange={(e) => setFile(e.target.files[0])} />
+                <div><label style={c.label}>{kind === 'agent' ? 'projectBV-key.exe' : 'File'}</label>
+                  <input type="file" {...(kind === 'agent' ? { accept: '.exe' } : {})} onChange={(e) => setFile(e.target.files[0])} />
                 </div>
+                {kind === 'agent' && (
+                  <div style={{ gridColumn: '1/-1' }}>
+                    <label style={c.label}>Plain .exe URL (only agents below 1.1.0 need this)</label>
+                    <input style={c.input} value={publishedUrl} onChange={(e) => setPublishedUrl(e.target.value)}
+                      placeholder="https://github.com/you/repo/releases/download/v1.1.0/projectBV-key.exe" />
+                  </div>
+                )}
               </>
             )}
           </div>

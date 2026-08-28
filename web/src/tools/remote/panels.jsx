@@ -13,7 +13,7 @@ const TABS = [
   { key: 'perf', label: 'Performance' },
 ]
 
-export function DevicePanel({ device, queued = null, fleetWide = false, hasFleetEntry = false, onChanged }) {
+export function DevicePanel({ device, queued = null, onChanged }) {
   const [tab, setTab] = useState('live')
   const [ping, setPing] = useState(null)
   const [pinging, setPinging] = useState(false)
@@ -85,7 +85,7 @@ export function DevicePanel({ device, queued = null, fleetWide = false, hasFleet
       </section>
 
       {!device.hasAgent ? (
-        <InstallOnDevice device={device} queued={queued} fleetWide={fleetWide} hasFleetEntry={hasFleetEntry} onChanged={onChanged} />
+        <InstallOnDevice device={device} queued={queued} onChanged={onChanged} />
       ) : !device.agentOnline ? (
         <div style={c.empty}>The agent on this device is offline — actions are unavailable until it checks back in.</div>
       ) : !isEnabled ? (
@@ -119,7 +119,7 @@ export function DevicePanel({ device, queued = null, fleetWide = false, hasFleet
 // addressed to this device: the entry names it as its only target, so no other
 // device touches it. The install itself needs no admin rights and shows the person
 // using the device nothing at all.
-function InstallOnDevice({ device, queued, fleetWide, hasFleetEntry, onChanged }) {
+function InstallOnDevice({ device, queued, onChanged }) {
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState(null)
   const ready = agentReady()
@@ -140,16 +140,10 @@ function InstallOnDevice({ device, queued, fleetWide, hasFleetEntry, onChanged }
       <h2 style={c.h2}>Remote isn't installed on {device.name} yet</h2>
       {queued ? (
         <>
-          <p style={c.sub}>
-            {fleetWide
-              ? `v${queued.version} is queued for the whole fleet, this device included. It installs silently at its next check-in — up to 30 minutes — and appears here as soon as it does.`
-              : `v${queued.version} is queued for this device. It installs silently at its next check-in — up to 30 minutes — and appears here as soon as it does.`}
-            {agentReady() && queued.version !== AGENT.version && ` A newer build (v${AGENT.version}) is available — send it again to push that instead.`}
-          </p>
+          <p style={c.sub}>Queued for this device — it installs silently at its next check-in (up to 30 minutes) and appears here when it does.</p>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button style={{ ...c.primary, opacity: busy || !ready ? 0.5 : 1 }} disabled={busy || !ready} onClick={install}>Send it again</button>
-            {!fleetWide && <button style={c.ghost} disabled={busy} onClick={cancel}>Cancel this install</button>}
-            {!fleetWide && hasFleetEntry && <span style={{ fontSize: 12, color: 'var(--dim)' }}>the fleet-wide install still covers this device</span>}
+            <button style={c.ghost} disabled={busy} onClick={cancel}>Cancel this install</button>
           </div>
         </>
       ) : (

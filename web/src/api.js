@@ -96,10 +96,25 @@ export async function deployApp({ name, version, file, silentArgs, scope }) {
 // release, because this binary embeds the fleet's Tailscale auth key. It is the
 // same file that goes on the USB; pick it here to push it to devices already on
 // the fleet.
-export async function deployAgentUpdate({ version, file, targets }) {
+export async function deployAgentUpdate({ version, file, targets, publishedUrl }) {
   if (!file) throw new Error('Choose the built projectBV-key.exe.')
   const sha256 = await sha256hex(file)
-  const url = await upload('agent', AGENT_NAME, version, sha256, file)
+  const stored = await upload('agent', AGENT_NAME, version, sha256, file)
+
+  // Agents older than 1.1.0 read the installer type off the whole URL, so a
+  // Firebase Storage link ("...projectBV-key.exe?alt=media&token=...") looks like
+  // type ".exe?alt=media..." to them and is rejected before it is ever downloaded.
+  // Publishing the same bytes at a plain .exe address is the only way to reach
+  // those devices. The checksum still comes from the local file, so a URL serving
+  // anything else is refused by every agent.
+  let url = stored
+  if (publishedUrl) {
+    const clean = String(publishedUrl).trim()
+    if (!/\.exe$/i.test(clean)) {
+      throw new Error('The published URL has to end in .exe — that is the whole point of it.')
+    }
+    url = clean
+  }
 
   const entry = {
     name: AGENT_NAME, version, type: 'app', url, sha256,
@@ -118,13 +133,23 @@ export async function deployAgentUpdate({ version, file, targets }) {
     setDoc(doc(manifestCol, `${AGENT_NAME}--${id}`), { ...entry, targets: [id] })))
 }
 
-export async function deployFile({ name, version, file, dest }) {
+// A plain file dropped on the device, no execution. targets works exactly as it
+// does for an agent update: empty means the whole fleet, and a named device gets
+// its own document so a targeted drop can sit alongside the fleet-wide one
+// instead of overwriting it.
+export async function deployFile({ name, version, file, dest, targets }) {
   refuseAgentName(name)
   const sha256 = await sha256hex(file)
   const url = await upload('files', name, version, sha256, file)
-  await setDoc(doc(manifestCol, name), {
-    name, version, type: 'file', url, sha256, dest,
-  })
+  const entry = { name, version, type: 'file', url, sha256, dest }
+
+  const named = (targets || []).filter(Boolean)
+  if (named.length === 0) {
+    await setDoc(doc(manifestCol, name), entry)
+    return
+  }
+  await Promise.all(named.map((id) =>
+    setDoc(doc(manifestCol, `${name}--${id}`), { ...entry, targets: [id] })))
 }
 
 export async function removeEntry(id) {
