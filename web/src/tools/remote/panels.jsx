@@ -10,7 +10,6 @@ const TABS = [
   { key: 'apps', label: 'Apps' },
   { key: 'tabs', label: 'Chrome tabs' },
   { key: 'message', label: 'Message' },
-  { key: 'perf', label: 'Performance' },
 ]
 
 export function DevicePanel({ device, queued = null, onChanged }) {
@@ -108,7 +107,6 @@ export function DevicePanel({ device, queued = null, onChanged }) {
           {tab === 'apps' && <AppsPanel device={device} />}
           {tab === 'tabs' && <TabsPanel device={device} />}
           {tab === 'message' && <MessagePanel device={device} />}
-          {tab === 'perf' && <PerfPanel device={device} />}
         </>
       )}
     </>
@@ -309,59 +307,6 @@ function TabsPanel({ device }) {
             </div>
           )}
         </>
-      )}
-    </section>
-  )
-}
-
-function Bar({ pct, color }) {
-  return (
-    <div style={{ background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 6, height: 10, overflow: 'hidden' }}>
-      <div style={{ width: `${Math.min(100, Math.max(0, pct))}%`, height: '100%', background: color }} />
-    </div>
-  )
-}
-function PerfPanel({ device }) {
-  const [p, setP] = useState(null)
-  const [err, setErr] = useState(null)
-  const [auto, setAuto] = useState(true)
-  useEffect(() => {
-    let alive = true
-    let handle = null
-    async function tick() {
-      try { const r = await runCommand(device.id, CMD.PERF, {}, 8000); if (alive) { setP(r.output); setErr(null) } } catch (e) { if (alive) setErr(e.message) }
-      if (alive && auto) handle = setTimeout(tick, 3000)
-    }
-    tick()
-    return () => { alive = false; if (handle) clearTimeout(handle) }
-  }, [device.id, auto])
-  return (
-    <section style={c.panel}>
-      <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 10, marginBottom: 12 }}>
-        <h2 style={c.h2}>Performance impact</h2>
-        <label style={{ fontSize: 12, color: 'var(--dim)', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}>
-          <input type="checkbox" checked={auto} onChange={(e) => setAuto(e.target.checked)} /> auto-refresh
-        </label>
-      </div>
-      {err && <div style={{ color: '#ff5c5c', fontSize: 13, marginBottom: 10 }}>{err}</div>}
-      {!p ? <div style={c.empty}>Loading…</div> : (
-        <div style={{ display: 'grid', gap: 16 }}>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 5 }}><span>Whole system — CPU</span><span style={{ color: 'var(--dim)' }}>{p.cpuPct}% of {p.cores} cores</span></div>
-            <Bar pct={p.cpuPct} color="var(--dim)" />
-          </div>
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 5 }}><span>Whole system — Memory</span><span style={{ color: 'var(--dim)' }}>{p.memUsedGB} / {p.memTotalGB} GB ({p.memPct}%)</span></div>
-            <Bar pct={p.memPct} color="var(--dim)" />
-          </div>
-          <div style={{ borderTop: '1px solid var(--line)', paddingTop: 14 }}>
-            <div style={{ fontSize: 12, color: 'var(--dim)', marginBottom: 8 }}>What the Remote tool itself is costing this device</div>
-            <div style={{ display: 'flex', gap: 24 }}>
-              <div><div style={{ fontSize: 22, fontWeight: 700 }}>{p.agentCpuPct}%</div><div style={{ fontSize: 12, color: 'var(--dim)' }}>agent CPU</div></div>
-              <div><div style={{ fontSize: 22, fontWeight: 700 }}>{p.agentMemMB} MB</div><div style={{ fontSize: 12, color: 'var(--dim)' }}>agent memory</div></div>
-            </div>
-          </div>
-        </div>
       )}
     </section>
   )
