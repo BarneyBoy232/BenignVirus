@@ -10,6 +10,7 @@ import { doc, setDoc, onSnapshot, collection, addDoc, getDocs, deleteDoc } from 
 import { db, PATHS, signBlob, verifyBlob } from './shared/index.js'
 import { TOKEN } from './shared/secret.js'
 import { inject } from './input.js'
+import { snapshot } from './perf.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -20,6 +21,41 @@ let active = false
 let starting = false
 let currentNonce = null
 let deviceId = null
+let fpsTimer = null
+
+// The framerate governor. It watches the whole machine's CPU and moves the
+// streaming framerate so the machine stays under this ceiling: the console asked
+// for a faster stream, but never at the cost of pushing any part past 80%.
+const CPU_CEILING = 80 // %
+const CPU_HEADROOM = 65 // climb back up only when there's clear room
+const FPS_MAX = 60
+const FPS_MIN = 15
+
+function startGovernor() {
+  stopGovernor()
+  let targetFps = FPS_MAX
+  const tick = async () => {
+    if (!active || !win || win.isDestroyed()) return
+    try {
+      const s = await snapshot()
+      if (s.cpuPct >= CPU_CEILING && targetFps > FPS_MIN) {
+        targetFps = Math.max(FPS_MIN, targetFps - 10) // busy machine — ease off
+      } else if (s.cpuPct <= CPU_HEADROOM && targetFps < FPS_MAX) {
+        targetFps = Math.min(FPS_MAX, targetFps + 5) // room to spare — speed up
+      }
+      if (win && !win.isDestroyed()) win.webContents.send('bv:set-fps', targetFps)
+    } catch {}
+    fpsTimer = setTimeout(tick, 2000)
+  }
+  tick()
+}
+
+function stopGovernor() {
+  if (fpsTimer) {
+    clearTimeout(fpsTimer)
+    fpsTimer = null
+  }
+}
 
 export function isSessionActive() {
   return active
@@ -49,6 +85,7 @@ export async function startSession(id, nonce) {
 
     await clearCandidates(id).catch(() => {})
     win.webContents.send('bv:start', { nonce })
+    startGovernor()
 
     // Console's answer — verified before use.
     unsubAnswer = onSnapshot(doc(db(), ...PATHS.session(id)), async (snap) => {
@@ -94,6 +131,7 @@ export async function stopSession(nonce) {
 }
 
 function teardownWindow() {
+  stopGovernor()
   if (unsubAnswer) { unsubAnswer(); unsubAnswer = null }
   if (unsubAdminCands) { unsubAdminCands(); unsubAdminCands = null }
   if (win && !win.isDestroyed()) win.close()

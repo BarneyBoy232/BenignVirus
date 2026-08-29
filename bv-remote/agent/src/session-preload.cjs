@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('bvSession', {
   onStart: (cb) => ipcRenderer.on('bv:start', (_e, d) => cb(d)),
   onAnswer: (cb) => ipcRenderer.on('bv:answer', (_e, a) => cb(a)),
   onAdminCandidate: (cb) => ipcRenderer.on('bv:admin-candidate', (_e, c) => cb(c)),
+  onSetFps: (cb) => ipcRenderer.on('bv:set-fps', (_e, fps) => cb(fps)),
   sendOffer: (nonce, offer) => ipcRenderer.send('bv:offer', { nonce, offer }),
   sendCandidate: (nonce, candidate) => ipcRenderer.send('bv:device-candidate', { nonce, candidate }),
   sendInput: (evt) => ipcRenderer.send('bv:input', evt),

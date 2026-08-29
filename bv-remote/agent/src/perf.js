@@ -1,7 +1,31 @@
 // A performance snapshot: system CPU/RAM plus THIS agent's own cost — which answers
-// "how much is the remote tool tanking their machine?" (the live streaming delta
-// lands in Phase 3, over the video session).
+// "how much is the remote tool tanking their machine?".
+//
+// The agent's own cost is summed across EVERY process Electron runs for it — the
+// main process, the hidden screen-capture window, the GPU process — because the
+// streaming happens in that capture window, not the main process. Measuring only
+// the main process (as before) reported a fraction of the real cost.
 import os from 'node:os'
+import { app } from 'electron'
+
+// appCost returns this whole app's CPU share of the machine and its total memory,
+// by summing Electron's per-process metrics.
+function appCost(cores) {
+  try {
+    let cpu = 0
+    let memKB = 0
+    for (const m of app.getAppMetrics()) {
+      cpu += (m.cpu && m.cpu.percentCPUUsage) || 0 // percent of ONE core
+      memKB += (m.memory && m.memory.workingSetSize) || 0
+    }
+    return {
+      cpuPct: Math.max(0, Math.round(cpu / Math.max(1, cores))), // share of all cores
+      memMB: Math.round(memKB / 1024),
+    }
+  } catch {
+    return { cpuPct: 0, memMB: 0 }
+  }
+}
 
 function cpuTimes() {
   const cpus = os.cpus()
@@ -39,13 +63,20 @@ export async function snapshot() {
   const freeMem = os.freemem()
   const usedMem = totalMem - freeMem
 
+  const cost = appCost(cores)
+
   return {
     cpuPct,
     cores,
     memUsedGB: +(usedMem / 1e9).toFixed(2),
     memTotalGB: +(totalMem / 1e9).toFixed(2),
     memPct: Math.round((usedMem / totalMem) * 100),
-    agentCpuPct: Math.max(0, agentCpuPct),
-    agentMemMB: Math.round(process.memoryUsage().rss / 1e6),
+    // The whole app's cost — main process plus the capture window and GPU. These
+    // are what the console shows as "what this app is taking".
+    agentCpuPct: cost.cpuPct,
+    agentMemMB: cost.memMB,
+    agentMemPct: totalMem > 0 ? Math.round((cost.memMB * 1e6) / totalMem * 100) : 0,
+    // Kept for reference: the main process alone, the old number.
+    mainCpuPct: Math.max(0, agentCpuPct),
   }
 }

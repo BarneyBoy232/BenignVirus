@@ -117,7 +117,7 @@ export function LivePanel({ device }) {
           <input type="checkbox" disabled={!connected} checked={controlling} onChange={(e) => setControlling(e.target.checked)} />
           Take control (your mouse &amp; keyboard drive the device — they can still use theirs)
         </label>
-        {perf && <span style={{ fontSize: 12, color: 'var(--dim)', marginLeft: 'auto' }}>streaming cost — system CPU {perf.cpuPct}% · RAM {perf.memPct}%</span>}
+        {perf && <span style={{ fontSize: 12, color: 'var(--dim)', marginLeft: 'auto' }}>this app is using — CPU {perf.agentCpuPct}% · RAM {perf.agentMemMB} MB</span>}
       </div>
     </section>
   )
