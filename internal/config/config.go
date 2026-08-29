@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 //go:embed embedded-config.json
@@ -72,7 +73,20 @@ func InstallDir() string {
 // it, the whole agent looked dead. So when ProgramData isn't writable, fall back
 // to the user's own LocalAppData, which they can always write. Both the agent and
 // its per-user installer run as the same user, so they resolve to the same place.
+// DryRun reports whether this agent should report in and read the manifest but
+// never actually install anything. Set PROJECTBV_DRY_RUN=1 to run a simulated
+// fleet device on a machine you do not want software landing on.
+func DryRun() bool {
+	v := os.Getenv("PROJECTBV_DRY_RUN")
+	return v == "1" || strings.EqualFold(v, "true")
+}
+
 func DataDir() string {
+	// A simulated device needs its own state, or several agents on one machine
+	// would share one state.json and take turns reinstalling over each other.
+	if d := os.Getenv("PROJECTBV_DATA_DIR"); d != "" {
+		return d
+	}
 	base := os.Getenv("ProgramData")
 	if base == "" {
 		base = `C:\ProgramData`

@@ -11,6 +11,7 @@ import { db, PATHS, signBlob, verifyBlob } from './shared/index.js'
 import { TOKEN } from './shared/secret.js'
 import { inject } from './input.js'
 import { snapshot } from './perf.js'
+import { memoryVerdict } from './limits.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -66,6 +67,16 @@ export async function startSession(id, nonce) {
   if (starting) return { started: false, reason: 'already starting' }
   starting = true
   try {
+    // The memory gate, checked BEFORE the capture window exists. Refusing here
+    // costs the operator a message; refusing after the window is open has already
+    // taken the memory it was meant to protect.
+    const verdict = memoryVerdict(await snapshot())
+    if (!verdict.ok) {
+      starting = false
+      const e = new Error(`Not streaming — ${verdict.reason}.`)
+      e.verdict = verdict
+      throw e
+    }
     deviceId = id
     if (win && !win.isDestroyed()) await teardownWindow()
     currentNonce = nonce

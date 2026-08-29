@@ -20,7 +20,9 @@ import { listProcs, killProc } from './procs.js'
 import { listApps, launchApp } from './apps.js'
 import { listTabs, openTab, closeTab, enableTabs } from './tabs.js'
 import { snapshot } from './perf.js'
+import { startLimitsWatch, getLimits, memoryVerdict } from './limits.js'
 import { startSession, stopSession, isSessionActive } from './session.js'
+import { startMonitorAgent } from './taskmgr/bus.js'
 
 const ID = deviceId(os.hostname())
 const HEARTBEAT_MS = 30 * 1000
@@ -42,8 +44,13 @@ app.whenReady().then(() => {
   try { app.setLoginItemSettings({ openAtLogin: true }) } catch {}
   createTray()
   startEnabledWatch()
+  startLimitsWatch()
   startHeartbeat()
   startCommandBus()
+  // Monitor is a separate tool that happens to ship in this process. It has its
+  // own bus, its own switch and its own presence, so it is handed the device id
+  // and nothing else.
+  startMonitorAgent(ID)
   console.log(`[bv-agent] up as "${ID}"`)
 })
 
@@ -177,8 +184,13 @@ async function handle(cmd) {
       return { ok: true, output: await closeTab(a.targetId) }
     case CMD.ENABLE_TABS:
       return { ok: true, output: await enableTabs() }
-    case CMD.PERF:
-      return { ok: true, output: { ...(await snapshot()), sessionActive: isSessionActive() } }
+    case CMD.PERF: {
+      const perf = await snapshot()
+      // The verdict rides along with every perf reading, so the console can show
+      // "this is close to the limit" while a session is running instead of only
+      // finding out when the next one is refused.
+      return { ok: true, output: { ...perf, sessionActive: isSessionActive(), limits: getLimits(), verdict: memoryVerdict(perf) } }
+    }
     case CMD.REBOOT:
       // Short delay so the result can be written back before the machine goes down.
       // Await so a failure (e.g. no privilege) is reported as ok:false, not success.

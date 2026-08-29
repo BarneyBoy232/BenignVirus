@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { listManifest, listDevices, deployApp, deployFile, removeEntry, deployAgentUpdate, AGENT_NAME } from './api'
+import { listManifest, listDevices, deployApp, deployFile, removeEntry, deployAgentUpdate, setDeviceLabel, AGENT_NAME } from './api'
 import { c, ago } from './ui'
 import agentBuild from './agent-build.json'
 
@@ -17,6 +17,8 @@ export default function DeployPage() {
   const [file, setFile] = useState(null)
   const [target, setTarget] = useState('')
   const [publishedUrl, setPublishedUrl] = useState('')
+  const [renaming, setRenaming] = useState(null) // device id being renamed
+  const [rename, setRename] = useState('')
   const [msg, setMsg] = useState(null)
   const [busy, setBusy] = useState(false)
 
@@ -35,20 +37,32 @@ export default function DeployPage() {
     return () => clearInterval(t)
   }, [])
 
+  // "Fleet agent" was never a different kind of send — it is the same "put this
+  // file on the devices", recognised from the file itself (or from typing the
+  // agent's name), so there is no mode to choose and no way to pick the wrong one.
+  const agentMode = !!file && /projectbv[-_]?key\.exe$/i.test(file.name)
+
+  async function onRename(id) {
+    await setDeviceLabel(id, rename).catch((err) => setMsg({ ok: false, text: err.message }))
+    setRenaming(null)
+    setRename('')
+    refresh()
+  }
+
   async function onDeploy(e) {
     e.preventDefault()
     if (!file) { setMsg({ ok: false, text: 'Choose a file first.' }); return }
-    if (kind === 'agent') {
+    if (agentMode) {
       const where = target ? target : `all ${devices.length} devices`
       if (!confirm(`Push the fleet agent (${agentBuild.version}) to ${where}? Each restarts its agent as it updates.`)) return
     } else if (!name || !version) {
       setMsg({ ok: false, text: 'Name and version are required.' }); return
-    } else if (kind === 'file' && !dest) {
+    } else if (!dest) {
       setMsg({ ok: false, text: 'A file needs a destination path.' }); return
     }
     setBusy(true); setMsg({ ok: true, text: 'Uploading…' })
     try {
-      if (kind === 'agent') {
+      if (agentMode) {
         await deployAgentUpdate({ version: agentBuild.version, file, targets: target ? [target] : [], publishedUrl })
       } else if (kind === 'app') {
         await deployApp({ name, version, file, scope, silentArgs: silent.split(',').map((s) => s.trim()).filter(Boolean) })
@@ -90,7 +104,19 @@ export default function DeployPage() {
                 const online = d.lastSeen && now - d.lastSeen < ONLINE_MS
                 return (
                   <tr key={d.id || d.name}>
-                    <td style={{ ...c.td, fontWeight: 600 }}>{d.name}</td>
+                    <td style={{ ...c.td, fontWeight: 600 }}>
+                      {renaming === (d.id || d.name) ? (
+                        <input autoFocus style={{ ...c.input, padding: '4px 8px' }} value={rename}
+                          onChange={(e) => setRename(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') onRename(d.id || d.name); if (e.key === 'Escape') setRenaming(null) }}
+                          onBlur={() => onRename(d.id || d.name)} />
+                      ) : (
+                        <span style={{ cursor: 'pointer' }} title={d.name}
+                          onClick={() => { setRenaming(d.id || d.name); setRename(d.label || '') }}>
+                          {d.display || d.name}
+                        </span>
+                      )}
+                    </td>
                     <td style={c.td}>{d.version || '—'}</td>
                     <td style={c.td}>
                       <span style={{ display: 'inline-block', width: 8, height: 8, borderRadius: 8, marginRight: 7, background: online ? 'var(--ok)' : '#5a5f66' }} />
@@ -110,12 +136,11 @@ export default function DeployPage() {
         <h2 style={c.h2}>Send a file / app</h2>
         <div style={{ display: 'inline-flex', background: 'var(--panel2)', border: '1px solid var(--line)', borderRadius: 9, padding: 3, marginBottom: 16 }}>
           {[['app', 'App (installer)'], ['file', 'File']].map(([k, label]) => {
-            // One File tab covers both a plain file and the fleet agent — both are
-            // "send these exact bytes" — so it stays lit for either kind.
-            const on = k === 'app' ? kind === 'app' : kind !== 'app'
+            // Two tabs: run an installer, or put a file on the device. The fleet
+            // agent is not a third thing — it is a file, recognised from the file.
+            const on = kind === k
             return (
-              <button key={k} type="button"
-                onClick={() => setKind(k === 'app' ? 'app' : kind === 'agent' ? 'agent' : 'file')}
+              <button key={k} type="button" onClick={() => setKind(k)}
                 style={{ background: on ? 'var(--accent)' : 'transparent', color: on ? 'var(--accent-ink)' : 'var(--dim)', border: 0, padding: '7px 16px', borderRadius: 7, cursor: 'pointer', fontWeight: on ? 600 : 400 }}>
                 {label}
               </button>
@@ -144,13 +169,10 @@ export default function DeployPage() {
             ) : (
               <>
                 <div style={{ gridColumn: '1/-1' }}>
-                  <label style={c.label}>Send</label>
-                  <select style={c.input} value={kind} onChange={(e) => setKind(e.target.value)}>
-                    <option value="file">a file to a path</option>
-                    <option value="agent">the fleet agent</option>
-                  </select>
+                  <label style={c.label}>File</label>
+                  <input type="file" onChange={(e) => setFile(e.target.files[0])} />
                 </div>
-                {kind === 'file' && (
+                {!agentMode && (
                   <>
                     <div><label style={c.label}>Name (unique)</label><input style={c.input} value={name} onChange={(e) => setName(e.target.value)} placeholder="AcmeTool" /></div>
                     <div><label style={c.label}>Version</label><input style={c.input} value={version} onChange={(e) => setVersion(e.target.value)} placeholder="1.2.0" /></div>
@@ -160,13 +182,10 @@ export default function DeployPage() {
                 <div><label style={c.label}>Push to</label>
                   <select style={c.input} value={target} onChange={(e) => setTarget(e.target.value)}>
                     <option value="">every device</option>
-                    {devices.map((d) => <option key={d.id || d.name} value={d.id || d.name}>{d.name} only</option>)}
+                    {devices.map((d) => <option key={d.id || d.name} value={d.id || d.name}>{d.display || d.name} only</option>)}
                   </select>
                 </div>
-                <div><label style={c.label}>{kind === 'agent' ? 'projectBV-key.exe' : 'File'}</label>
-                  <input type="file" {...(kind === 'agent' ? { accept: '.exe' } : {})} onChange={(e) => setFile(e.target.files[0])} />
-                </div>
-                {kind === 'agent' && (
+                {agentMode && (
                   <div style={{ gridColumn: '1/-1' }}>
                     <label style={c.label}>Plain .exe URL (only agents below 1.1.0 need this)</label>
                     <input style={c.input} value={publishedUrl} onChange={(e) => setPublishedUrl(e.target.value)}
@@ -178,7 +197,7 @@ export default function DeployPage() {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
             <button type="submit" style={{ ...c.primary, opacity: busy ? 0.5 : 1 }} disabled={busy}>
-              {kind === 'agent' ? (target ? 'Update this device' : 'Update every device') : 'Deploy'}
+              {agentMode ? (target ? 'Update this device' : 'Update every device') : 'Deploy'}
             </button>
             {msg && <span style={{ fontSize: 13, color: msg.ok ? 'var(--ok)' : '#ff5c5c' }}>{msg.text}</span>}
           </div>

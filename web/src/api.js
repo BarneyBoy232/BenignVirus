@@ -10,6 +10,11 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
 
 const manifestCol = collection(db, 'from_projectbv', 'fleet', 'manifest')
 const devicesCol = collection(db, 'from_projectbv', 'fleet', 'devices')
+// Friendly names live in their own collection, NOT on the device document. The
+// agent's heartbeat PATCHes that document without an updateMask, which replaces
+// it wholesale — anything the dashboard wrote there would be gone inside a minute.
+// Keeping labels separate also means renaming needs no agent change at all.
+const labelsCol = collection(db, 'from_projectbv', 'fleet', 'labels')
 
 // SHA-256 of a file, computed in the browser (matches what the agent verifies).
 async function sha256hex(file) {
@@ -29,8 +34,20 @@ export async function listManifest() {
 // Devices carry their document id: that id is the device's name in a manifest
 // entry's `targets`, so anything aiming an install at one machine needs it.
 export async function listDevices() {
-  const snap = await getDocs(devicesCol)
-  return snap.docs.map((d) => ({ id: d.id, ...d.data() }))
+  const [snap, labels] = await Promise.all([getDocs(devicesCol), getDocs(labelsCol)])
+  const byId = new Map(labels.docs.map((d) => [d.id, (d.data() || {}).label || '']))
+  return snap.docs.map((d) => {
+    const label = byId.get(d.id) || ''
+    return { id: d.id, ...d.data(), label, display: label || d.data().name || d.id }
+  })
+}
+
+// Rename a device for the dashboard's benefit. An empty label clears it and the
+// machine goes back to showing its hostname.
+export async function setDeviceLabel(deviceId, label) {
+  const clean = String(label || '').trim()
+  if (!clean) return deleteDoc(doc(labelsCol, deviceId))
+  return setDoc(doc(labelsCol, deviceId), { label: clean, ts: Date.now() })
 }
 
 // Every distinct set of bytes gets its own path, because the path includes their

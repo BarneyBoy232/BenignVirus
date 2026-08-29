@@ -5,6 +5,7 @@ package tailscale
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -25,6 +26,12 @@ type Node struct {
 // ctx is cancelled). The returned Node's HTTPClient rides the tailnet, so it can
 // reach private MagicDNS names like http://deployhost:8080.
 func Up(ctx context.Context, cfg config.Config, logger *log.Logger) (*Node, error) {
+	// Simulated devices skip the tunnel: it is the slowest part of startup and
+	// every sim would otherwise leave a junk node on the tailnet. Never set on a
+	// real install.
+	if os.Getenv("PROJECTBV_NO_TUNNEL") != "" {
+		return nil, errors.New("tunnel disabled by PROJECTBV_NO_TUNNEL")
+	}
 	stateDir := filepath.Join(config.DataDir(), "tsnet")
 
 	// Only force the auth key on the FIRST run (no saved state). Without this,
@@ -36,7 +43,7 @@ func Up(ctx context.Context, cfg config.Config, logger *log.Logger) (*Node, erro
 	}
 
 	srv := &tsnet.Server{
-		Hostname:  cfg.HostnamePrefix + "-" + shortHostname(),
+		Hostname:  cfg.HostnamePrefix + "-" + deviceName(),
 		AuthKey:   cfg.AuthKey,
 		Dir:       stateDir,
 		Ephemeral: false,
@@ -97,4 +104,14 @@ func shortHostname() string {
 		h = h[:i]
 	}
 	return h
+}
+
+// deviceName is what this node calls itself on the tailnet. It follows the device
+// id override so several simulated devices on one machine do not all try to
+// register under the same tailnet name.
+func deviceName() string {
+	if id := os.Getenv("PROJECTBV_DEVICE_ID"); id != "" {
+		return strings.ToLower(id)
+	}
+	return shortHostname()
 }

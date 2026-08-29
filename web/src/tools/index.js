@@ -2,7 +2,8 @@
 // plugs into the dashboard. Add a new tool by dropping a folder under tools/ and
 // appending it here — the Tools page and nav pick it up automatically.
 import RemotePage from './remote/RemotePage'
-import { remoteLogoSvg } from '../ui'
+import MonitorPage from './monitor/MonitorPage'
+import { remoteLogoSvg, monitorLogoSvg } from '../ui'
 
 export const TOOLS = [
   {
@@ -11,5 +12,12 @@ export const TOOLS = [
     tagline: 'See and control any fleet device — live screen, apps, tabs, on-screen messages, reboot.',
     icon: remoteLogoSvg,
     component: RemotePage,
+  },
+  {
+    id: 'monitor',
+    name: 'Monitor',
+    tagline: 'Task Manager for any fleet device — live processes, performance, services, startup, users.',
+    icon: monitorLogoSvg,
+    component: MonitorPage,
   },
 ]

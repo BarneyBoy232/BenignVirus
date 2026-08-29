@@ -2,15 +2,19 @@ import { useEffect, useRef, useState } from 'react'
 import { CMD } from './protocol'
 import { runCommand } from './data'
 import { startSession } from './session'
+import { loadLimits, saveLimits, clampPct, DEFAULT_LIMITS } from './limits'
 import { c } from '../../ui'
 
 export function LivePanel({ device }) {
   const videoRef = useRef(null)
+  const stageRef = useRef(null)
   const sessionRef = useRef(null)
   const lastMove = useRef(0)
   const [state, setState] = useState('idle')
   const [controlling, setControlling] = useState(false)
   const [perf, setPerf] = useState(null)
+  const [full, setFull] = useState(false)
+  const [showLimits, setShowLimits] = useState(false)
 
   function start() {
     if (sessionRef.current) return
@@ -41,6 +45,33 @@ export function LivePanel({ device }) {
     tick()
     return () => { alive = false; if (h) clearTimeout(h) }
   }, [state, device.id])
+
+  // --- fullscreen ---------------------------------------------------------
+  // The point of this view is to look at somebody's machine as if you were sitting
+  // at it. In a panel on a dashboard page you are looking at a postage stamp of a
+  // 1080p screen, which is fine for "is it on" and useless for actually using it.
+  // Fullscreen puts the remote screen at 1:1 or close to it.
+  useEffect(() => {
+    const onChange = () => setFull(document.fullscreenElement === stageRef.current)
+    document.addEventListener('fullscreenchange', onChange)
+    return () => document.removeEventListener('fullscreenchange', onChange)
+  }, [])
+
+  async function toggleFullscreen() {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen()
+      else await stageRef.current?.requestFullscreen()
+    } catch { /* the browser refused; the panel view still works */ }
+  }
+
+  // While controlling in fullscreen, Escape belongs to the remote machine, not to
+  // the browser. Keyboard lock hands it over — the browser then needs Escape HELD
+  // to leave, which is the standard way out and does not collide with a tap.
+  useEffect(() => {
+    if (!full || !controlling) return undefined
+    navigator.keyboard?.lock?.(['Escape']).catch(() => {})
+    return () => { try { navigator.keyboard?.unlock?.() } catch {} }
+  }, [full, controlling])
 
   const send = (evt) => sessionRef.current?.sendInput(evt)
   function toRemote(e) {
@@ -79,21 +110,46 @@ export function LivePanel({ device }) {
 
   useEffect(() => { if (['failed', 'disconnected', 'closed'].includes(state)) setControlling(false) }, [state])
 
+  // A refused start leaves a half-open peer connection behind. Tearing it down
+  // here — without clearing the state — puts the Start button back while the
+  // reason for the refusal stays on screen.
+  useEffect(() => {
+    if (!state.startsWith('blocked:')) return
+    sessionRef.current?.stop()
+    sessionRef.current = null
+    setControlling(false)
+  }, [state])
+
   const connected = state === 'ready' || state === 'connected'
+  const blocked = state.startsWith('blocked:')
   const statusText = {
     idle: 'not connected', connecting: 'connecting…', ready: 'live', connected: 'live',
     disconnected: 'disconnected — press Stop, then start again',
     failed: 'connection failed — press Stop, then start again', closed: 'disconnected',
-  }[state] || (state.startsWith('error') ? state.replace('error:', 'error: ') : state)
+  }[state] || (blocked ? state.replace('blocked:', '') : state.startsWith('error') ? state.replace('error:', 'error: ') : state)
+
+  // A session that is already running is not cut off when the machine crosses a
+  // ceiling — the operator may be in the middle of fixing the very thing causing
+  // it, and pulling the screen out from under them would make that impossible.
+  // It says so instead, and refuses the NEXT start.
+  const overLimit = perf?.verdict && !perf.verdict.ok
+
+  const stageStyle = full
+    ? { position: 'relative', background: '#000', width: '100vw', height: '100vh' }
+    : { position: 'relative', background: '#000', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--line)', minHeight: 240 }
+  const videoStyle = full
+    ? { display: 'block', width: '100vw', height: '100vh', objectFit: 'contain', cursor: controlling ? 'crosshair' : 'default' }
+    : { display: 'block', width: '100%', maxHeight: '60vh', objectFit: 'contain', cursor: controlling ? 'crosshair' : 'default' }
 
   return (
     <section style={c.panel}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12, flexWrap: 'wrap' }}>
         <h2 style={c.h2}>Live screen</h2>
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          <span style={{ fontSize: 12, color: connected ? 'var(--ok)' : state.startsWith('error') ? '#ff5c5c' : 'var(--dim)' }}>
+          <span style={{ fontSize: 12, color: connected ? 'var(--ok)' : (blocked || state.startsWith('error')) ? 'var(--bad)' : 'var(--dim)' }}>
             <span style={c.dot(connected)} />{statusText}
           </span>
+          {connected && <button style={c.ghost} onClick={toggleFullscreen}>Fullscreen</button>}
           {sessionRef.current ? (
             <button style={c.ghost} onClick={stop}>Stop</button>
           ) : (
@@ -102,12 +158,23 @@ export function LivePanel({ device }) {
         </div>
       </div>
 
-      <div style={{ position: 'relative', background: '#000', borderRadius: 10, overflow: 'hidden', border: '1px solid var(--line)', minHeight: 240 }}>
+      <div ref={stageRef} style={stageStyle} onDoubleClick={connected ? toggleFullscreen : undefined}>
         <video ref={videoRef} autoPlay playsInline muted onMouseMove={onMove} onMouseDown={onDown} onMouseUp={onUp} onWheel={onWheel} onContextMenu={(e) => e.preventDefault()}
-          style={{ display: 'block', width: '100%', maxHeight: '60vh', objectFit: 'contain', cursor: controlling ? 'crosshair' : 'default' }} />
+          style={videoStyle} />
         {!connected && (
-          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--dim)', fontSize: 13 }}>
-            {state === 'connecting' ? 'Connecting to the device…' : 'Start the live view to see this device’s screen.'}
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', color: 'var(--dim)', fontSize: 13, textAlign: 'center', padding: 20 }}>
+            {state === 'connecting' ? 'Connecting to the device…'
+              : blocked ? statusText
+              : 'Start the live view to see this device’s screen.'}
+          </div>
+        )}
+        {full && (
+          <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(0,0,0,0.6)', borderRadius: 8, padding: '6px 10px' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#fff' }}>
+              <input type="checkbox" checked={controlling} onChange={(e) => setControlling(e.target.checked)} />
+              Control
+            </label>
+            <button style={{ ...c.ghost, padding: '4px 9px', fontSize: 12 }} onClick={toggleFullscreen}>Exit</button>
           </div>
         )}
       </div>
@@ -117,8 +184,69 @@ export function LivePanel({ device }) {
           <input type="checkbox" disabled={!connected} checked={controlling} onChange={(e) => setControlling(e.target.checked)} />
           Take control (your mouse &amp; keyboard drive the device — they can still use theirs)
         </label>
-        {perf && <span style={{ fontSize: 12, color: 'var(--dim)', marginLeft: 'auto' }}>this app is using — CPU {perf.agentCpuPct}% · RAM {perf.agentMemMB} MB</span>}
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
+          {perf && (
+            <span style={{ fontSize: 12, color: overLimit ? 'var(--bad)' : 'var(--dim)' }}>
+              this app: CPU {perf.agentCpuPct}% · RAM {perf.agentMemMB} MB ({perf.agentMemPct}%) · device RAM {perf.memPct}%
+            </span>
+          )}
+          <button style={{ ...c.ghost, padding: '5px 10px', fontSize: 12 }} onClick={() => setShowLimits((v) => !v)}>Limits</button>
+        </div>
       </div>
+
+      {overLimit && (
+        <div style={{ fontSize: 12, color: 'var(--bad)', marginTop: 8 }}>
+          Over the limit — {perf.verdict.reason}. The session keeps running; the next one will be refused.
+        </div>
+      )}
+
+      {showLimits && <LimitsEditor onClose={() => setShowLimits(false)} />}
     </section>
+  )
+}
+
+function LimitsEditor({ onClose }) {
+  const [values, setValues] = useState(null)
+  const [saving, setSaving] = useState(false)
+  const [note, setNote] = useState(null)
+
+  useEffect(() => { loadLimits().then(setValues).catch((e) => setNote({ bad: true, text: e.message })) }, [])
+
+  if (!values) return <div style={{ ...c.panel, marginTop: 14, marginBottom: 0 }}><span style={{ fontSize: 13, color: 'var(--dim)' }}>Reading…</span></div>
+
+  const field = (key, label) => (
+    <label style={{ display: 'grid', gap: 5 }}>
+      <span style={c.label}>{label}</span>
+      <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <input type="number" min={10} max={100} value={values[key]}
+          onChange={(e) => setValues((v) => ({ ...v, [key]: e.target.value }))}
+          onBlur={() => setValues((v) => ({ ...v, [key]: clampPct(v[key], DEFAULT_LIMITS[key]) }))}
+          style={{ ...c.input, width: 90 }} />
+        <span style={{ fontSize: 13, color: 'var(--dim)' }}>%</span>
+      </span>
+    </label>
+  )
+
+  async function save() {
+    setSaving(true)
+    try {
+      setValues(await saveLimits(values))
+      setNote({ text: 'Saved — every device picks this up straight away.' })
+    } catch (e) {
+      setNote({ bad: true, text: e.message })
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div style={{ ...c.panel, marginTop: 14, marginBottom: 0 }}>
+      <div style={{ display: 'flex', gap: 18, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        {field('appRamPct', 'Refuse to stream when this app is at or above')}
+        {field('machineRamPct', 'Refuse to stream when the device is at or above')}
+        <button style={c.primary} disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
+        <button style={c.ghost} onClick={onClose}>Close</button>
+      </div>
+      {note && <div style={{ fontSize: 12, color: note.bad ? 'var(--bad)' : 'var(--dim)', marginTop: 10 }}>{note.text}</div>}
+    </div>
   )
 }

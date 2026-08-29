@@ -1,7 +1,12 @@
 :root{
   --bg:#0e0f11; --panel:#17191c; --panel2:#1e2125; --line:#2a2e33;
   --text:#e9ebee; --dim:#9aa1a9; --accent:#ffd200; --accent-ink:#1a1a00;
-  --ok:#5cd67a;
+  --ok:#5cd67a; --bad:#ff5c5c;
+  /* Chart colours. One per metric, so a reading is identified by its hue before
+     its label is read. Kept out of the accent's way: yellow still marks exactly
+     one thing per screen. */
+  --chart-cpu:#4aa3df; --chart-mem:#a77bd6; --chart-disk:#57b98a;
+  --chart-net:#e0704a; --chart-gpu:#4ad6cd; --chart-heat:255,178,44;
 }
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--text);

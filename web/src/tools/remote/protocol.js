@@ -14,6 +14,9 @@ export const PATHS = {
   session: (id) => [...ROOT, 'sessions', id],
   adminCandidates: (id) => [...ROOT, 'sessions', id, 'adminCandidates'],
   deviceCandidates: (id) => [...ROOT, 'sessions', id, 'deviceCandidates'],
+
+  // The two streaming ceilings, set here and read by every device.
+  limits: () => [...ROOT, 'settings', 'limits'],
 }
 // The projectBV fleet heartbeat (written by the device agents).
 export const FLEET_DEVICES = ['from_projectbv', 'fleet', 'devices']

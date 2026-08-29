@@ -1,0 +1,134 @@
+rules_version = '2';
+
+// projectBV — Firestore security rules.
+//
+// STATUS: written, NOT deployed. Committed here so the rule set is reviewable and
+// versioned instead of living only in the Firebase console. Deploy with:
+//     firebase deploy --only firestore:rules
+//
+// ---------------------------------------------------------------------------
+// What these rules can and cannot do, honestly
+//
+// Two of the three programs that touch this database are UNAUTHENTICATED by
+// design:
+//   • the Go fleet agent (internal/firestore) is a REST client with only the
+//     public web apiKey — it has no identity to check, and
+//   • the BV Remote device agent initialises Firebase without signing in.
+// Only the dashboard signs in, anonymously.
+//
+// So `request.auth != null` cannot be required anywhere without taking the fleet
+// offline, and anonymous auth would prove nothing anyway — anyone can obtain it.
+// These rules therefore constrain SHAPE and SIZE, not identity. They stop the
+// database being used as free storage or filled with junk that breaks a client;
+// they do not stop a determined reader.
+//
+// Content protection is done in the payload instead: Monitor's frames carry the
+// machine's process list, command lines and usernames, and are AES-GCM encrypted
+// with Monitor's own shared secret before they are written (see
+// bv-remote/agent/src/taskmgr/monitor.js). What is stored here is opaque.
+//
+// The real fix is per-device identity, at which point the `allow` lines below
+// become identity checks rather than shape checks.
+// ---------------------------------------------------------------------------
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // --- deploy: what to install, and which devices are alive ---------------
+    // The manifest is written by the dashboard and read by every agent; the
+    // device documents are written by the agents themselves.
+    match /from_projectbv/fleet/manifest/{entry} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['name', 'version', 'type'])
+                   && request.resource.data.name is string
+                   && request.resource.data.name.size() < 200;
+    }
+
+    match /from_projectbv/fleet/devices/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 30;
+    }
+
+    match /from_projectbv/fleet/labels/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasOnly(['label', 'ts']);
+    }
+
+    // --- remote control: presence, the command bus, WebRTC signalling -------
+    // Commands are HMAC-signed with the fleet's shared secret and the agent drops
+    // anything that does not verify, so an unsigned write here is inert.
+    match /from_projectbv/remotedesk/agents/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 30;
+    }
+
+    match /from_projectbv/remotedesk/enabled/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasOnly(['enabled', 'ts']);
+    }
+
+    match /from_projectbv/remotedesk/commands/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
+                   && request.resource.data.sig is string;
+    }
+
+    match /from_projectbv/remotedesk/results/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 20;
+    }
+
+    match /from_projectbv/remotedesk/sessions/{device}/{sub=**} {
+      allow read, write: if true;
+    }
+
+    // --- monitor: its own partition, not a corner of the remote tool's ------
+    // Monitor ships inside the same device agent but is a separate tool with its
+    // own secret, so it gets its own presence, switch, bus and frames.
+    match /from_projectbv/monitor/agents/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 30;
+    }
+
+    match /from_projectbv/monitor/enabled/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasOnly(['enabled', 'ts']);
+    }
+
+    match /from_projectbv/monitor/commands/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['id', 'cmd', 'ts', 'sig'])
+                   && request.resource.data.sig is string;
+    }
+
+    match /from_projectbv/monitor/results/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.size() < 20;
+    }
+
+    // The lease is signed; a write without `sig` is ignored by the device.
+    match /from_projectbv/monitor/watch/{device} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['nonce', 'until', 'sig'])
+                   && request.resource.data.until is number
+                   && request.resource.data.sig is string;
+      allow delete: if true;
+    }
+
+    // The 900KB ceiling is Firestore's own 1MB document limit with room to spare —
+    // a real frame is 10-40KB, so anything near the cap is not a frame.
+    match /from_projectbv/monitor/{store}/{device} {
+      allow read: if store in ['frames', 'meta'];
+      allow write: if store in ['frames', 'meta']
+                   && request.resource.data.keys().hasAll(['nonce', 'seq', 'ts', 'box'])
+                   && request.resource.data.box is string
+                   && request.resource.data.box.size() < 900000;
+    }
+
+    // Anything not named above is closed. New collections have to be added here
+    // deliberately, so a new tool cannot quietly start writing wherever it likes.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

@@ -147,10 +147,20 @@ func (p *program) heartbeatLoop(ctx context.Context, fs *firestore.Client) {
 // deviceID is the machine's hostname, reduced to characters valid in a Firestore
 // document id.
 func deviceID() string {
+	// Overridable so one machine can stand in for several fleet devices while
+	// testing. Unset in every real install, where the hostname is the id.
+	if id := os.Getenv("PROJECTBV_DEVICE_ID"); id != "" {
+		return sanitiseID(id)
+	}
 	h, err := os.Hostname()
 	if err != nil || h == "" {
 		return "device"
 	}
+	return sanitiseID(h)
+}
+
+// sanitiseID reduces a name to characters valid in a Firestore document id.
+func sanitiseID(h string) string {
 	var b strings.Builder
 	for _, r := range h {
 		switch {

@@ -88,6 +88,12 @@ type state map[string]string
 // Firestore; downloads (installer/file payloads) use httpClient over the internet.
 func Run(ctx context.Context, fs *firestore.Client, httpClient *http.Client, cfg config.Config, deviceID string, logger *log.Logger) {
 	interval := time.Duration(cfg.IntervalMinutes) * time.Minute
+	// Tests cannot wait half an hour to see whether a deploy lands.
+	if v := os.Getenv("PROJECTBV_INTERVAL_SECONDS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			interval = time.Duration(n) * time.Second
+		}
+	}
 	logger.Printf("updater: started, checking the Firebase manifest every %v", interval)
 
 	checkOnce(ctx, fs, httpClient, deviceID, logger)
@@ -138,6 +144,10 @@ func applyManifest(ctx context.Context, httpClient *http.Client, m Manifest, dev
 			// doesn't need someone standing at the machine. Bounded to one attempt per
 			// version per run so a failed update can't download in a loop.
 			if !known || installed != app.Version {
+				if config.DryRun() {
+					logger.Printf("updater: DRY RUN — would update the agent %s -> %s", orNone(installed), app.Version)
+					continue
+				}
 				if !claimSelfUpdate(app) {
 					continue
 				}
@@ -169,6 +179,11 @@ func applyManifest(ctx context.Context, httpClient *http.Client, m Manifest, dev
 			action = fmt.Sprintf("updating %s -> %s", installed, app.Version)
 		}
 		logger.Printf("updater: %s %q (%s)", action, app.Name, app.Version)
+
+		if config.DryRun() {
+			logger.Printf("updater: DRY RUN — not installing %q", app.Name)
+			continue
+		}
 
 		var err error
 		switch strings.ToLower(app.Type) {

@@ -64,7 +64,13 @@ export function startSession(deviceId, { onStream, onState }) {
   )
 
   onState('connecting')
-  runCommand(deviceId, CMD.START_SESSION, { nonce }, 15000).catch((e) => onState('error:' + e.message))
+  runCommand(deviceId, CMD.START_SESSION, { nonce }, 15000)
+    .then((r) => {
+      // The device refuses when the machine has no memory to spare. That is an
+      // answer, not a failure, and it has to reach the operator as one.
+      if (!r.ok) onState('blocked:' + (typeof r.output === 'string' ? r.output : 'the device declined to stream'))
+    })
+    .catch((e) => onState('error:' + e.message))
 
   function sendInput(evt) {
     if (channel && channel.readyState === 'open') channel.send(JSON.stringify(evt))

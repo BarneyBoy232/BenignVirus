@@ -48,3 +48,15 @@ export const remoteLogoSvg = (size = 22) => ({
     <path d="M45 33 L45 61 L52 54 L57 65 L62 63 L57 52 L67 52 Z" fill="#ffd200"/>
   </svg>`,
 })
+
+// The Monitor tool mark (a gauge dial), used in the Tools list + Monitor page.
+export const monitorLogoSvg = (size = 22) => ({
+  __html: `<svg width="${size}" height="${size}" viewBox="0 0 100 100" aria-hidden="true">
+    <path d="M12 68 A38 38 0 1 1 88 68" fill="none" stroke="#ffd200" stroke-width="8" stroke-linecap="round"/>
+    <path d="M50 62 L72 38" fill="none" stroke="#ffd200" stroke-width="7" stroke-linecap="round"/>
+    <circle cx="50" cy="64" r="7" fill="#ffd200"/>
+    <rect x="20" y="78" width="12" height="12" rx="3" fill="#ffd200"/>
+    <rect x="44" y="78" width="12" height="12" rx="3" fill="#ffd200"/>
+    <rect x="68" y="78" width="12" height="12" rx="3" fill="#ffd200"/>
+  </svg>`,
+})

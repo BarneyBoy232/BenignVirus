@@ -26,6 +26,9 @@ export const PATHS = {
   session: (id) => [...ROOT, 'sessions', id],
   adminCandidates: (id) => [...ROOT, 'sessions', id, 'adminCandidates'],
   deviceCandidates: (id) => [...ROOT, 'sessions', id, 'deviceCandidates'],
+
+  // The streaming limits, set once in the dashboard and read by every device.
+  limits: () => [...ROOT, 'settings', 'limits'],
 }
 
 // The existing projectBV fleet heartbeat (written by the Go agent). We read it to
