@@ -22,6 +22,7 @@ import { listTabs, openTab, closeTab, enableTabs } from './tabs.js'
 import { snapshot } from './perf.js'
 import { startLimitsWatch, getLimits, memoryVerdict } from './limits.js'
 import { startSession, stopSession, isSessionActive } from './session.js'
+import { setInputBlocked, isInputBlocked } from './blockinput.js'
 import { startMonitorAgent } from './taskmgr/bus.js'
 
 const ID = deviceId(os.hostname())
@@ -96,7 +97,7 @@ function startHeartbeat() {
       lastSeen: Date.now(),
       enabled, // whether this device is currently switched on for control
       // Capabilities this build supports — grows as phases land.
-      caps: ['bus', 'popup', 'apps', 'tabs', 'perf', 'reboot', 'session'],
+      caps: ['bus', 'popup', 'apps', 'tabs', 'perf', 'reboot', 'session', 'audio', 'lock', 'blockinput'],
       version: app.getVersion(),
     }).catch((e) => console.error('[bv-agent] heartbeat failed:', e.message))
   write()
@@ -201,7 +202,13 @@ async function handle(cmd) {
     case CMD.START_SESSION:
       return { ok: true, output: await startSession(ID, a.nonce) }
     case CMD.STOP_SESSION:
+      // Never leave the person frozen out after the operator disconnects.
+      if (isInputBlocked()) setInputBlocked(false)
       return { ok: true, output: await stopSession(a.nonce) }
+    case CMD.BLOCK_INPUT:
+      // Freeze or unfreeze the person sitting at the device. The console decides;
+      // the agent guarantees it can never be left frozen (see blockinput.js).
+      return { ok: true, output: setInputBlocked(!!a.on) }
     default:
       return { ok: false, output: `unknown command: ${cmd.cmd}` }
   }

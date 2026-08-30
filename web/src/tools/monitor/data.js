@@ -56,7 +56,7 @@ function once(deviceId, cmd, args, timeoutMs) {
         )
         timer = setTimeout(() => {
           done()
-          reject(new Error(`No answer after ${Math.round(timeoutMs / 1000)}s — Monitor may not be running on that device.`))
+          reject(new Error(`No answer after ${Math.round(timeoutMs / 1000)}s — Task Manager may not be running on that device.`))
         }, timeoutMs)
       })
       .catch(reject)
@@ -116,7 +116,7 @@ export function watchDevice(deviceId, { intervalMs = 2000, onSample, onMeta, onE
       const d = snap.data()
       if (!d || d.nonce !== nonce || !d.box) return
       try { handler(await unseal(d.box), d.ts) }
-      catch { onError?.('a frame arrived that this dashboard could not open — the device may be running a different Monitor secret') }
+      catch { onError?.('a frame arrived that this dashboard could not open — the device may be running a different Task Manager secret') }
     },
     (err) => onError?.(err.message),
   )

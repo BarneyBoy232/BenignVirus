@@ -15,8 +15,8 @@ export const TOOLS = [
   },
   {
     id: 'monitor',
-    name: 'Monitor',
-    tagline: 'Task Manager for any fleet device — live processes, performance, services, startup, users.',
+    name: 'Task Manager',
+    tagline: 'Any fleet device, live — processes, performance, services, startup, users.',
     icon: monitorLogoSvg,
     component: MonitorPage,
   },

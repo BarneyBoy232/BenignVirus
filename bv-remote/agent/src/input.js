@@ -9,6 +9,21 @@ keyboard.config.autoDelayMs = 0
 
 const BUTTON = { 0: Button.LEFT, 1: Button.MIDDLE, 2: Button.RIGHT }
 
+// The console sends coordinates in the pixels of the VIDEO it is looking at, and
+// the video is capped at 1920x1080. On anything bigger — a 4K screen, or a
+// 150%-scaled laptop panel — those are not this machine's screen pixels, and
+// injecting them raw puts every click in the top-left quadrant with the rest of
+// the desktop unreachable. The session measures the real screen against the
+// captured frame and sets the ratio here.
+let scaleX = 1
+let scaleY = 1
+
+export function setInputScale(sx, sy) {
+  scaleX = Number.isFinite(sx) && sx > 0 ? sx : 1
+  scaleY = Number.isFinite(sy) && sy > 0 ? sy : 1
+  console.log(`[bv-agent] input scale ${scaleX.toFixed(3)} x ${scaleY.toFixed(3)}`)
+}
+
 // Map a browser KeyboardEvent.code (physical key, layout-independent) to a nut Key.
 const KEY = (() => {
   const m = {}
@@ -46,9 +61,17 @@ export function inject(evt) {
 
 async function run(evt) {
   switch (evt.t) {
-    case 'm': // mouse move — x,y already in remote screen pixels
-      await mouse.setPosition(new Point(Math.round(evt.x), Math.round(evt.y)))
+    case 'm': // mouse move — x,y arrive in captured-video pixels (absolute)
+      await mouse.setPosition(new Point(Math.round(evt.x * scaleX), Math.round(evt.y * scaleY)))
       break
+    case 'mr': { // mouse move — dx,dy arrive in captured-video pixels (relative)
+      // Lock mode: the operator's cursor is captured and hidden, and we nudge THIS
+      // machine's real cursor by the same amount. There is only ever one visible
+      // cursor — the device's own — so the two can never drift apart.
+      const cur = await mouse.getPosition()
+      await mouse.setPosition(new Point(Math.round(cur.x + evt.dx * scaleX), Math.round(cur.y + evt.dy * scaleY)))
+      break
+    }
     case 'd':
       await mouse.pressButton(BUTTON[evt.b] ?? Button.LEFT)
       break

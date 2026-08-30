@@ -3,13 +3,13 @@
 // and runs WebRTC. This module owns that window's lifecycle, relays the WebRTC
 // signaling through Firestore (SIGNED with the shared secret so a Firestore reader
 // can't hijack it), and injects the input that arrives back.
-import { BrowserWindow, desktopCapturer, ipcMain } from 'electron'
+import { BrowserWindow, desktopCapturer, ipcMain, screen } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { doc, setDoc, onSnapshot, collection, addDoc, getDocs, deleteDoc } from 'firebase/firestore'
 import { db, PATHS, signBlob, verifyBlob } from './shared/index.js'
 import { TOKEN } from './shared/secret.js'
-import { inject } from './input.js'
+import { inject, setInputScale } from './input.js'
 import { snapshot } from './perf.js'
 import { memoryVerdict } from './limits.js'
 
@@ -64,7 +64,7 @@ export function isSessionActive() {
 
 export async function startSession(id, nonce) {
   // Synchronous guard: reject a second start slipping in before the first awaits.
-  if (starting) return { started: false, reason: 'already starting' }
+  if (starting) throw new Error('A session is already starting on this device.')
   starting = true
   try {
     // The memory gate, checked BEFORE the capture window exists. Refusing here
@@ -157,9 +157,23 @@ async function clearCandidates(id) {
 }
 
 // --- IPC from the session renderer ---------------------------------------
+// Capture the PRIMARY display specifically, not whichever screen happens to be
+// first. On a two-monitor device those are often different, and the input scale is
+// worked out against the primary — capturing one screen while aiming clicks at
+// another puts every click on the wrong monitor. Windows also places the primary
+// at the origin of the virtual desktop, so its coordinates need no offset, which
+// is what makes the plain multiply below correct.
 ipcMain.handle('bv:get-source', async () => {
   const sources = await desktopCapturer.getSources({ types: ['screen'] })
-  return sources[0] ? { id: sources[0].id } : null
+  if (!sources.length) return null
+  let chosen = sources[0]
+  try {
+    const primaryId = String(screen.getPrimaryDisplay().id)
+    const match = sources.find((s) => String(s.display_id) === primaryId)
+    if (match) chosen = match
+    else console.warn('[bv-agent] could not identify the primary screen among the capture sources; using the first')
+  } catch {}
+  return { id: chosen.id }
 })
 ipcMain.on('bv:offer', async (_e, { nonce, offer }) => {
   if (nonce !== currentNonce || !deviceId) return
@@ -174,3 +188,20 @@ ipcMain.on('bv:device-candidate', async (_e, { nonce, candidate }) => {
   await addDoc(collection(db(), ...PATHS.deviceCandidates(deviceId)), { nonce, candidate, sig, ts: Date.now() }).catch(() => {})
 })
 ipcMain.on('bv:input', (_e, evt) => inject(evt))
+
+// The captured frame's size against the screen's real pixel size. Electron reports
+// the display in logical points, so the scale factor has to be applied to get the
+// physical pixels nut-js actually addresses — otherwise a 150%-scaled laptop is
+// wrong even at 1080p.
+ipcMain.on('bv:capture-size', (_e, size) => {
+  const w = Number(size && size.width) || 0
+  const h = Number(size && size.height) || 0
+  if (w <= 0 || h <= 0) { setInputScale(1, 1); return }
+  try {
+    const d = screen.getPrimaryDisplay()
+    const f = d.scaleFactor || 1
+    setInputScale((d.size.width * f) / w, (d.size.height * f) / h)
+  } catch {
+    setInputScale(1, 1)
+  }
+})

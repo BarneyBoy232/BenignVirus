@@ -37,6 +37,7 @@ export const CMD = {
   REBOOT: 'reboot',
   START_SESSION: 'start_session',
   STOP_SESSION: 'stop_session',
+  BLOCK_INPUT: 'block_input',
 }
 
 let _seq = 0

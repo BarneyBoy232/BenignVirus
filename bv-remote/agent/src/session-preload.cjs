@@ -12,4 +12,5 @@ contextBridge.exposeInMainWorld('bvSession', {
   sendOffer: (nonce, offer) => ipcRenderer.send('bv:offer', { nonce, offer }),
   sendCandidate: (nonce, candidate) => ipcRenderer.send('bv:device-candidate', { nonce, candidate }),
   sendInput: (evt) => ipcRenderer.send('bv:input', evt),
+  reportCapture: (size) => ipcRenderer.send('bv:capture-size', size),
 })

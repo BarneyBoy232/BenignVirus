@@ -15,6 +15,13 @@ export function LivePanel({ device }) {
   const [perf, setPerf] = useState(null)
   const [full, setFull] = useState(false)
   const [showLimits, setShowLimits] = useState(false)
+  const [locked, setLocked] = useState(false)   // pointer captured (mouse-lock mode)
+  const [sound, setSound] = useState(false)      // listening to the device's audio
+  const [frozen, setFrozen] = useState(false)    // their keyboard + mouse blocked
+  const canFreeze = (device.caps || []).includes('blockinput')
+  // A ref does not re-render, so the Start/Stop button has to track the session in
+  // state or it keeps saying "Stop" for a session that was refused.
+  const [hasSession, setHasSession] = useState(false)
 
   function start() {
     if (sessionRef.current) return
@@ -23,11 +30,15 @@ export function LivePanel({ device }) {
       onStream: (stream) => { if (videoRef.current) videoRef.current.srcObject = stream },
       onState: (s) => setState(s),
     })
+    setHasSession(true)
   }
   function stop() {
-    setControlling(false)
+    setControl(false)
+    if (frozen) toggleFreeze(false)
+    setSound(false)
     sessionRef.current?.stop()
     sessionRef.current = null
+    setHasSession(false)
     if (videoRef.current) videoRef.current.srcObject = null
     setState('idle')
     setPerf(null)
@@ -73,6 +84,37 @@ export function LivePanel({ device }) {
     return () => { try { navigator.keyboard?.unlock?.() } catch {} }
   }, [full, controlling])
 
+  // --- mouse-lock mode ----------------------------------------------------
+  // The fix for "my cursor and theirs don't line up": capture the operator's
+  // pointer and hide it, then send only how FAR it moved. The device nudges its
+  // own real cursor by the same amount, so there is one cursor, always aligned —
+  // never a second local cursor drifting away from the remote one.
+  useEffect(() => {
+    const onChange = () => setLocked(document.pointerLockElement === videoRef.current)
+    document.addEventListener('pointerlockchange', onChange)
+    return () => document.removeEventListener('pointerlockchange', onChange)
+  }, [])
+
+  function lockPointer() { try { videoRef.current?.requestPointerLock?.() } catch {} }
+
+  // setControl is the one place control turns on/off, so lock mode follows it: on
+  // means capture the pointer, off means release it. Called straight from the
+  // toggle's click so the browser accepts the pointer-lock request as a gesture.
+  function setControl(on) {
+    setControlling(on)
+    if (on) lockPointer()
+    else { try { if (document.pointerLockElement) document.exitPointerLock?.() } catch {} }
+  }
+
+  // Listening plays the device's audio through the same <video>; muted otherwise.
+  useEffect(() => { if (videoRef.current) videoRef.current.muted = !sound }, [sound, state])
+
+  async function toggleFreeze(on) {
+    setFrozen(on)
+    try { await runCommand(device.id, CMD.BLOCK_INPUT, { on }, 8000) }
+    catch { setFrozen(!on) }
+  }
+
   const send = (evt) => sessionRef.current?.sendInput(evt)
   function toRemote(e) {
     const v = videoRef.current
@@ -87,28 +129,55 @@ export function LivePanel({ device }) {
     const y = (e.clientY - rect.top - offY) / scale
     return { x: Math.max(0, Math.min(vw, x)), y: Math.max(0, Math.min(vh, y)) }
   }
+  function captureScale() {
+    const v = videoRef.current
+    if (!v) return 1
+    const rect = v.getBoundingClientRect()
+    const vw = v.videoWidth, vh = v.videoHeight
+    if (!vw || !vh) return 1
+    return Math.min(rect.width / vw, rect.height / vh) || 1
+  }
   function onMove(e) {
     if (!controlling) return
     const now = performance.now()
-    if (now - lastMove.current < 30) return
+    if (now - lastMove.current < 15) return
     lastMove.current = now
-    const { x, y } = toRemote(e)
-    send({ t: 'm', x, y })
+    if (document.pointerLockElement === videoRef.current) {
+      const s = captureScale()
+      send({ t: 'mr', dx: e.movementX / s, dy: e.movementY / s })
+    } else {
+      const { x, y } = toRemote(e)
+      send({ t: 'm', x, y })
+    }
   }
-  function onDown(e) { if (!controlling) return; e.preventDefault(); const { x, y } = toRemote(e); send({ t: 'm', x, y }); send({ t: 'd', b: e.button }) }
+  function onDown(e) {
+    if (!controlling) return
+    e.preventDefault()
+    if (document.pointerLockElement !== videoRef.current) {
+      lockPointer()                       // this click is the gesture that re-locks
+      const { x, y } = toRemote(e); send({ t: 'm', x, y })
+    }
+    send({ t: 'd', b: e.button })
+  }
   function onUp(e) { if (!controlling) return; e.preventDefault(); send({ t: 'u', b: e.button }) }
   function onWheel(e) { if (!controlling) return; e.preventDefault(); send({ t: 'w', dy: Math.sign(e.deltaY) * 3 }) }
 
   useEffect(() => {
     if (!controlling) return
-    const down = (e) => { e.preventDefault(); send({ t: 'k', a: 'down', code: e.code }) }
-    const up = (e) => { e.preventDefault(); send({ t: 'k', a: 'up', code: e.code }) }
+    // A key aimed at a field in this dashboard belongs to this dashboard. Without
+    // this, ticking Control makes the Limits inputs impossible to type into.
+    const mine = (e) => {
+      const t = e.target
+      return t && (t.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA'].includes(t.tagName))
+    }
+    const down = (e) => { if (mine(e)) return; e.preventDefault(); send({ t: 'k', a: 'down', code: e.code }) }
+    const up = (e) => { if (mine(e)) return; e.preventDefault(); send({ t: 'k', a: 'up', code: e.code }) }
     window.addEventListener('keydown', down, true)
     window.addEventListener('keyup', up, true)
     return () => { window.removeEventListener('keydown', down, true); window.removeEventListener('keyup', up, true) }
   }, [controlling])
 
-  useEffect(() => { if (['failed', 'disconnected', 'closed'].includes(state)) setControlling(false) }, [state])
+  useEffect(() => { if (['failed', 'disconnected', 'closed'].includes(state)) setControl(false) }, [state])
 
   // A refused start leaves a half-open peer connection behind. Tearing it down
   // here — without clearing the state — puts the Start button back while the
@@ -117,6 +186,7 @@ export function LivePanel({ device }) {
     if (!state.startsWith('blocked:')) return
     sessionRef.current?.stop()
     sessionRef.current = null
+    setHasSession(false)
     setControlling(false)
   }, [state])
 
@@ -149,8 +219,10 @@ export function LivePanel({ device }) {
           <span style={{ fontSize: 12, color: connected ? 'var(--ok)' : (blocked || state.startsWith('error')) ? 'var(--bad)' : 'var(--dim)' }}>
             <span style={c.dot(connected)} />{statusText}
           </span>
+          {connected && <button style={{ ...c.ghost, opacity: sound ? 1 : 0.65 }} onClick={() => setSound((v) => !v)}>{sound ? 'Sound on' : 'Sound off'}</button>}
+          {connected && canFreeze && <button style={{ ...c.ghost, color: frozen ? 'var(--bad)' : undefined }} onClick={() => toggleFreeze(!frozen)}>{frozen ? 'Unfreeze input' : 'Freeze their input'}</button>}
           {connected && <button style={c.ghost} onClick={toggleFullscreen}>Fullscreen</button>}
-          {sessionRef.current ? (
+          {hasSession ? (
             <button style={c.ghost} onClick={stop}>Stop</button>
           ) : (
             <button style={c.primary} onClick={start} disabled={!device.agentOnline}>Start live view</button>
@@ -171,9 +243,11 @@ export function LivePanel({ device }) {
         {full && (
           <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 8, alignItems: 'center', background: 'rgba(0,0,0,0.6)', borderRadius: 8, padding: '6px 10px' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: '#fff' }}>
-              <input type="checkbox" checked={controlling} onChange={(e) => setControlling(e.target.checked)} />
+              <input type="checkbox" checked={controlling} onChange={(e) => setControl(e.target.checked)} />
               Control
             </label>
+            <button style={{ ...c.ghost, padding: '4px 9px', fontSize: 12 }} onClick={() => setSound((v) => !v)}>{sound ? 'Sound on' : 'Sound off'}</button>
+            {canFreeze && <button style={{ ...c.ghost, padding: '4px 9px', fontSize: 12, color: frozen ? 'var(--bad)' : undefined }} onClick={() => toggleFreeze(!frozen)}>{frozen ? 'Unfreeze' : 'Freeze'}</button>}
             <button style={{ ...c.ghost, padding: '4px 9px', fontSize: 12 }} onClick={toggleFullscreen}>Exit</button>
           </div>
         )}
@@ -181,8 +255,8 @@ export function LivePanel({ device }) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: connected ? 'pointer' : 'not-allowed', opacity: connected ? 1 : 0.5 }}>
-          <input type="checkbox" disabled={!connected} checked={controlling} onChange={(e) => setControlling(e.target.checked)} />
-          Take control (your mouse &amp; keyboard drive the device — they can still use theirs)
+          <input type="checkbox" disabled={!connected} checked={controlling} onChange={(e) => setControl(e.target.checked)} />
+          Take control (mouse-lock: your pointer is captured and aligns with theirs — press Esc to release)
         </label>
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
           {perf && (
@@ -209,9 +283,18 @@ function LimitsEditor({ onClose }) {
   const [values, setValues] = useState(null)
   const [saving, setSaving] = useState(false)
   const [note, setNote] = useState(null)
+  const [failed, setFailed] = useState(null)
 
-  useEffect(() => { loadLimits().then(setValues).catch((e) => setNote({ bad: true, text: e.message })) }, [])
+  useEffect(() => { loadLimits().then(setValues).catch((e) => setFailed(e.message)) }, [])
 
+  if (failed) {
+    return (
+      <div style={{ ...c.panel, marginTop: 14, marginBottom: 0, display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ fontSize: 13, color: 'var(--bad)' }}>Could not read the limits: {failed}</span>
+        <button style={c.ghost} onClick={onClose}>Close</button>
+      </div>
+    )
+  }
   if (!values) return <div style={{ ...c.panel, marginTop: 14, marginBottom: 0 }}><span style={{ fontSize: 13, color: 'var(--dim)' }}>Reading…</span></div>
 
   const field = (key, label) => (
@@ -243,7 +326,7 @@ function LimitsEditor({ onClose }) {
       <div style={{ display: 'flex', gap: 18, alignItems: 'flex-end', flexWrap: 'wrap' }}>
         {field('appRamPct', 'Refuse to stream when this app is at or above')}
         {field('machineRamPct', 'Refuse to stream when the device is at or above')}
-        <button style={c.primary} disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
+        <button style={c.ghost} disabled={saving} onClick={save}>{saving ? 'Saving…' : 'Save'}</button>
         <button style={c.ghost} onClick={onClose}>Close</button>
       </div>
       {note && <div style={{ fontSize: 12, color: note.bad ? 'var(--bad)' : 'var(--dim)', marginTop: 10 }}>{note.text}</div>}

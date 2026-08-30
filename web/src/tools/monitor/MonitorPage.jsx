@@ -59,7 +59,7 @@ export default function MonitorPage() {
         {err && <div style={{ color: 'var(--bad)', fontSize: 13, marginBottom: 10 }}>{err}</div>}
         {devices.length === 0 ? <div style={c.empty}>No devices yet.</div> : devices.map((d) => {
           const on = selected === d.id
-          const label = !d.hasAgent ? 'no Monitor agent'
+          const label = !d.hasAgent ? 'no Task Manager agent'
             : !d.agentOnline ? `offline · ${ago(d.agentLastSeen)}`
             : d.enabled ? (d.streaming ? 'streaming' : 'ready') : 'switched off'
           return (
@@ -178,13 +178,13 @@ function DeviceMonitor({ device, onChanged }) {
   const toggle = async (on) => { await setEnabled(device.id, on); onChanged?.() }
 
   if (!device.hasAgent) {
-    return <div style={c.panel}>No Monitor agent on {device.name}. It ships in the BV Remote installer — push the current build from the Remote tool.</div>
+    return <div style={c.panel}>No Task Manager agent on {device.name}. It ships in the BV Remote installer — push the current build from the Remote tool.</div>
   }
   if (!device.agentOnline) return <div style={c.panel}>{device.name} last checked in {ago(device.agentLastSeen)}.</div>
   if (!device.enabled) {
     return (
       <div style={{ ...c.panel, display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-        <span>Monitor is switched off for {device.name}.</span>
+        <span>Task Manager is switched off for {device.name}.</span>
         <button style={c.primary} onClick={() => toggle(true)}>Turn on</button>
       </div>
     )

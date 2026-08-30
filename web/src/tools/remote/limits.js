@@ -14,6 +14,10 @@ export const DEFAULT_LIMITS = { appRamPct: 80, machineRamPct: 80 }
 // Matches the agent's clamp exactly. Below 10 a device could never stream at all;
 // above 100 means nothing.
 export const clampPct = (v, fallback) => {
+  // An empty field means "I have not typed a number yet", which Number() would
+  // read as 0 and the clamp would then floor to 10 — a ceiling under which no
+  // device in the fleet could ever stream again, set by blurring an input.
+  if (v === '' || v === null || v === undefined) return fallback
   const n = Number(v)
   if (!Number.isFinite(n)) return fallback
   return Math.min(100, Math.max(10, Math.round(n)))

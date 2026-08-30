@@ -82,6 +82,16 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // The streaming ceilings. One document for the whole fleet, signed, so a write
+    // without the secret is ignored by every device that reads it.
+    match /from_projectbv/remotedesk/settings/{entry} {
+      allow read: if true;
+      allow write: if request.resource.data.keys().hasAll(['appRamPct', 'machineRamPct', 'sig'])
+                   && request.resource.data.appRamPct is number
+                   && request.resource.data.machineRamPct is number
+                   && request.resource.data.sig is string;
+    }
+
     // --- monitor: its own partition, not a corner of the remote tool's ------
     // Monitor ships inside the same device agent but is a separate tool with its
     // own secret, so it gets its own presence, switch, bus and frames.
